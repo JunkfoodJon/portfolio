@@ -1,0 +1,7 @@
+# internal notes and tooling, not part of the published site
+.claude/
+.github/
+.vscode/
+TIMELINE.md
+FACE-TEXT-PLAN.md
+CONTACT-PLAN.md

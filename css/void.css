@@ -1,0 +1,284 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   void.css — black ground, white light, nothing else.
+
+   In WebGL mode the page has no UI: the crystal and its wall are the
+   interface. The only DOM that shows is a tiny hover label and a hint that
+   dissolves after the first interaction. Everything under "plain page" is used
+   only when WebGL cannot start.
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --ink:   #f4f6fb;
+  --mute:  rgba(244, 246, 251, 0.62);
+  --faint: rgba(244, 246, 251, 0.34);
+  --line:  rgba(244, 246, 251, 0.16);
+  --sans:  "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --mono:  ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-weight: 300;
+  -webkit-font-smoothing: antialiased;
+  /* the page itself never scrolls, bounces, refreshes or zooms under a finger: every gesture is the crystal's */
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+ol, ul { list-style: none; }
+:focus-visible { outline: 1px solid var(--ink); outline-offset: 3px; }
+
+.sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+
+#canvas {
+  position: fixed; inset: 0;
+  display: block; width: 100vw; height: 100vh; height: 100dvh;   /* (dvh: a phone's browser bars are not under it) */
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+  cursor: grab;
+}
+
+/* WebGL mode: no DOM UI */
+body:not(.no-webgl) #rail,
+body:not(.no-webgl) #dossier { display: none; }
+
+/* ── hover label: just words, no box ─────────────────────────────────────── */
+
+/* Pure white with a difference blend: every glyph pixel inverts what is under
+   it — black over the lit glass, white over the void, split mid-letter at an
+   edge — so the label reads on anything. (A glow would muddy the inversion.) */
+#tip {
+  position: fixed; left: 0; top: 0; z-index: 9;
+  font-size: .78rem; font-weight: 400; letter-spacing: .24em; text-transform: uppercase;
+  color: #fff;
+  mix-blend-mode: difference;
+  opacity: 0; pointer-events: none; white-space: nowrap;
+  transition: opacity .25s ease;
+}
+#tip.on { opacity: 1; }
+
+/* ── hint: said once, then gone ──────────────────────────────────────────── */
+
+#hint {
+  position: fixed; left: 0; right: 0; bottom: 26px; z-index: 4;
+  text-align: center; pointer-events: none;
+  font-size: .7rem; letter-spacing: .26em; text-transform: uppercase;
+  color: var(--faint);
+  opacity: 1; transition: opacity 1.4s ease;
+}
+#hint.gone { opacity: 0; }
+
+/* ── loader ──────────────────────────────────────────────────────────────── */
+
+#loader {
+  position: fixed; inset: 0; z-index: 50;
+  display: grid; place-content: center;
+  background: #000;
+  transition: opacity .9s ease, visibility .9s;
+}
+#loader.out { opacity: 0; visibility: hidden; }
+/* The crystal in miniature: eight faces outlined in light, turning and breathing. Each face fills as its
+   side is ready (main.js). Only transform and opacity move, so the compositor runs it however busy the
+   page is. A face is a 28 px triangle in a 40 × 36.25 box (6 px for its glow), hinged on its equator edge */
+.loader-dot { display: block; width: 0; height: 0; animation: breathe 3.2s ease-in-out infinite; }
+.loader-dot .spin { display: block; position: relative; transform-style: preserve-3d; animation: turn 14s linear infinite; }
+.loader-dot i {
+  position: absolute; left: -20px; top: -30.25px; width: 40px; height: 36.25px;
+  transform-origin: 50% 30.25px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 36.25'%3E%3Cfilter id='g' x='-50%25' y='-50%25' width='200%25' height='200%25'%3E%3CfeGaussianBlur stdDeviation='1.6'/%3E%3C/filter%3E%3Cg fill='none' stroke='white' stroke-linejoin='round'%3E%3Cpolygon points='6,30.25 34,30.25 20,6' stroke-width='1.6' opacity='.7' filter='url(%23g)'/%3E%3Cpolygon points='6,30.25 34,30.25 20,6' stroke-width='.8'/%3E%3C/g%3E%3C/svg%3E") no-repeat;
+}
+.loader-dot i:nth-child(n+5) {
+  top: -6px; transform-origin: 50% 6px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 36.25'%3E%3Cfilter id='g' x='-50%25' y='-50%25' width='200%25' height='200%25'%3E%3CfeGaussianBlur stdDeviation='1.6'/%3E%3C/filter%3E%3Cg fill='none' stroke='white' stroke-linejoin='round'%3E%3Cpolygon points='6,6 34,6 20,30.25' stroke-width='1.6' opacity='.7' filter='url(%23g)'/%3E%3Cpolygon points='6,6 34,6 20,30.25' stroke-width='.8'/%3E%3C/g%3E%3C/svg%3E");
+}
+.loader-dot i::after {
+  content: ""; position: absolute; inset: 0; opacity: 0; transition: opacity .8s ease;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 36.25'%3E%3Cfilter id='g' x='-50%25' y='-50%25' width='200%25' height='200%25'%3E%3CfeGaussianBlur stdDeviation='2.4'/%3E%3C/filter%3E%3Cpolygon points='6,30.25 34,30.25 20,6' fill='white' opacity='.6' filter='url(%23g)'/%3E%3Cpolygon points='6,30.25 34,30.25 20,6' fill='white' opacity='.42'/%3E%3C/svg%3E") no-repeat;
+}
+.loader-dot i:nth-child(n+5)::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 36.25'%3E%3Cfilter id='g' x='-50%25' y='-50%25' width='200%25' height='200%25'%3E%3CfeGaussianBlur stdDeviation='2.4'/%3E%3C/filter%3E%3Cpolygon points='6,6 34,6 20,30.25' fill='white' opacity='.6' filter='url(%23g)'/%3E%3Cpolygon points='6,6 34,6 20,30.25' fill='white' opacity='.42'/%3E%3C/svg%3E");
+}
+.loader-dot i.on::after { opacity: 1; }
+.loader-dot i:nth-child(1) { transform: rotateY(45deg)  translateZ(14px) rotateX(35.26deg); }
+.loader-dot i:nth-child(2) { transform: rotateY(135deg) translateZ(14px) rotateX(35.26deg); }
+.loader-dot i:nth-child(3) { transform: rotateY(225deg) translateZ(14px) rotateX(35.26deg); }
+.loader-dot i:nth-child(4) { transform: rotateY(315deg) translateZ(14px) rotateX(35.26deg); }
+.loader-dot i:nth-child(5) { transform: rotateY(45deg)  translateZ(14px) rotateX(-35.26deg); }
+.loader-dot i:nth-child(6) { transform: rotateY(135deg) translateZ(14px) rotateX(-35.26deg); }
+.loader-dot i:nth-child(7) { transform: rotateY(225deg) translateZ(14px) rotateX(-35.26deg); }
+.loader-dot i:nth-child(8) { transform: rotateY(315deg) translateZ(14px) rotateX(-35.26deg); }
+@keyframes breathe { 0%, 100% { opacity: .55; transform: scale(.94); } 50% { opacity: 1; transform: scale(1.06); } }
+@keyframes turn { from { transform: rotateX(-22deg) rotateY(0deg); } to { transform: rotateX(-22deg) rotateY(360deg); } }
+
+body.ctx-lost::after {
+  content: ""; position: fixed; inset: 0; background: #000; z-index: 70;
+}
+
+/* ── plain page (no WebGL only) ──────────────────────────────────────────── */
+
+body.no-webgl { overflow: auto; height: auto; touch-action: auto; overscroll-behavior: auto; }
+html:has(body.no-webgl) { overflow: auto; height: auto; touch-action: auto; overscroll-behavior: auto; }
+body.no-webgl #canvas, body.no-webgl #hint, body.no-webgl #tip { display: none; }
+
+body.no-webgl #rail { max-width: 720px; margin: 72px auto 28px; padding: 0 22px; }
+body.no-webgl #rail-list { display: grid; gap: 2px; }
+body.no-webgl .rail-btn {
+  display: grid; grid-template-columns: 34px 1fr; gap: 8px; align-items: baseline;
+  width: 100%; padding: 14px 4px; text-align: left; border-bottom: 1px solid var(--line);
+}
+body.no-webgl .rail-pip { display: none; }
+body.no-webgl .rail-idx { font-family: var(--mono); font-size: .7rem; color: var(--faint); }
+body.no-webgl .rail-name { font-size: 1.15rem; letter-spacing: .02em; }
+body.no-webgl .rail-btn:hover .rail-name,
+body.no-webgl .rail-btn[aria-current="true"] .rail-name { text-shadow: 0 0 16px rgba(255, 255, 255, .6); }
+
+body.no-webgl #dossier { max-width: 720px; margin: 0 auto 80px; padding: 8px 22px 0; }
+.dz-head { display: flex; gap: 14px; align-items: baseline; margin-bottom: 14px; }
+.dz-idx, .dz-status, .dz-meta, .dz-foot-note { font-family: var(--mono); font-size: .7rem; letter-spacing: .1em; color: var(--faint); text-transform: uppercase; }
+.dz-status { flex: 1; }
+.dz-close { font-family: var(--mono); font-size: .68rem; color: var(--mute); border: 1px solid var(--line); padding: 4px 10px; }
+.dz-title { font-size: 2rem; font-weight: 300; letter-spacing: .02em; text-shadow: 0 0 22px rgba(255, 255, 255, .5); }
+.dz-title:focus { outline: none; }
+.dz-tag { margin-top: 8px; color: var(--mute); }
+.dz-meta { margin-top: 10px; }
+.dz-tabs { display: flex; gap: 4px; margin: 22px 0 0; border-bottom: 1px solid var(--line); }
+.dz-tabs button { padding: 9px 12px; color: var(--mute); font-size: .85rem; border-bottom: 1px solid transparent; margin-bottom: -1px; }
+.dz-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.dz-tab-num { display: none; }
+.dz-body { padding: 20px 0 8px; }
+.dz-lead { font-size: 1.05rem; line-height: 1.65; }
+.dz-list { margin-top: 16px; display: grid; gap: 10px; }
+.dz-list li { color: var(--mute); line-height: 1.55; padding-left: 16px; position: relative; }
+.dz-list li::before { content: ""; position: absolute; left: 0; top: .7em; width: 6px; height: 1px; background: var(--ink); }
+.dz-acc-item { border-bottom: 1px solid var(--line); }
+.dz-acc-btn { display: flex; gap: 12px; width: 100%; text-align: left; padding: 14px 0; font-size: 1rem; }
+.dz-acc-n { font-family: var(--mono); font-size: .66rem; color: var(--faint); }
+.dz-acc-ico { margin-left: auto; }
+.dz-acc-body { padding: 0 0 14px 30px; color: var(--mute); line-height: 1.6; }
+.dz-acc-body[hidden] { display: none; }
+.dz-stack-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.dz-stack-g { font-family: var(--mono); font-size: .66rem; color: var(--faint); text-transform: uppercase; letter-spacing: .14em; }
+.dz-chips { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
+.dz-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 26px 18px; }
+.dz-stat-v { display: flex; align-items: baseline; gap: 4px; font-size: 2.2rem; }
+.dz-stat-u { font-size: 1rem; }
+.dz-stat-l { margin-top: 6px; color: var(--mute); font-size: .85rem; }
+.dz-foot { display: flex; justify-content: space-between; padding-top: 18px; margin-top: 12px; border-top: 1px solid var(--line); }
+.dz-step { color: var(--mute); display: inline-flex; gap: 10px; padding: 8px 2px; }
+.dz-step:hover { color: var(--ink); }
+
+/* ── contact: the one deliberate piece of HTML UI (contact.js) ───────────── */
+
+#canvas { transition: filter .6s ease; }
+body.contact-open #canvas { filter: brightness(.45); }
+body.contact-flare #canvas { animation: ct-flare 1.2s ease-out; }
+@keyframes ct-flare { 0% { filter: brightness(.45); } 30% { filter: brightness(1.7); } 100% { filter: brightness(1); } }
+
+/* the glyph: beside the hint, at orbit only, breathing like the loader */
+#contact-btn {
+  position: fixed; right: 22px; bottom: 14px; z-index: 5;
+  display: flex; align-items: center; gap: 10px; padding: 8px;
+  color: var(--ink);
+  opacity: 0; visibility: hidden; transition: opacity .6s ease, visibility .6s;
+}
+#contact-btn.on { opacity: 1; visibility: visible; }
+#contact-btn.dim { color: var(--faint); }                /* first load, until a face has been visited: the hint's grey */
+#contact-btn.dim svg { filter: none; }
+body.contact-open #contact-btn { opacity: 0; pointer-events: none; }   /* (still focusable: focus returns to it on close) */
+#contact-btn svg { width: 22px; height: 22px; filter: drop-shadow(0 0 4px rgba(255, 255, 255, .7)); animation: ct-breathe 3.2s ease-in-out infinite; }
+#contact-btn .ct-label {
+  position: absolute; right: 100%; white-space: nowrap; pointer-events: none;   /* (outside the hit area: only the glyph opens it) */
+  font-size: .7rem; letter-spacing: .26em; text-transform: uppercase; color: var(--mute);
+  opacity: 0; transform: translateX(6px); transition: opacity .3s ease, transform .3s ease;
+}
+#contact-btn:hover .ct-label, #contact-btn:focus-visible .ct-label { opacity: 1; transform: none; }
+@keyframes ct-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+
+/* the panel: black glass, thin glowing white edges */
+#contact { position: fixed; inset: 0; z-index: 30; visibility: hidden; transition: visibility 0s linear .45s; }
+#contact.open { visibility: visible; transition-delay: 0s; }   /* (visible at once, so focus can move in) */
+.ct-backdrop { position: absolute; inset: 0; touch-action: none; }
+.ct-panel {
+  position: absolute; left: 50%; top: 50%;
+  display: flex; flex-direction: column;
+  width: min(460px, calc(100vw - 32px)); max-height: min(720px, calc(100dvh - 48px));
+  background: rgba(0, 0, 0, .74);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border: 1px solid rgba(244, 246, 251, .55);
+  box-shadow: 0 0 22px rgba(255, 255, 255, .16), inset 0 0 14px rgba(255, 255, 255, .05);
+  opacity: 0; transform: translate(-50%, calc(-50% + 14px));
+  transition: opacity .45s ease, transform .45s ease;
+}
+#contact.open .ct-panel { opacity: 1; transform: translate(-50%, -50%); }
+.ct-head { display: flex; align-items: center; gap: 12px; padding: 18px 22px 14px; border-bottom: 1px solid var(--line); }
+.ct-head h2 { flex: 1; font-size: .78rem; font-weight: 400; letter-spacing: .26em; text-transform: uppercase; }
+.ct-glyph svg { display: block; width: 18px; height: 18px; filter: drop-shadow(0 0 4px rgba(255, 255, 255, .7)); }
+#contact.sent .ct-glyph svg { animation: ct-fly 1.2s ease-in forwards; }
+@keyframes ct-fly { 0% { transform: none; opacity: 1; } 70% { opacity: 1; } 100% { transform: translate(120px, -60px) scale(.4); opacity: 0; } }
+.ct-close { width: 32px; height: 32px; color: var(--mute); font-size: .9rem; }
+.ct-close:hover { color: var(--ink); }
+.ct-scroll {
+  overflow-y: auto; padding: 18px 22px 22px;
+  touch-action: pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+}
+.ct-about p { line-height: 1.6; }
+.ct-about p + p { margin-top: 6px; }
+#contact h3 { margin: 22px 0 10px; font-family: var(--mono); font-size: .66rem; font-weight: 400; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+.ct-steps { font-family: var(--mono); font-size: .7rem; letter-spacing: .1em; color: var(--mute); margin-bottom: 14px; }
+.ct-form fieldset { border: 0; margin-bottom: 14px; }
+.ct-form legend, .ct-form label:not(.ct-chip) { display: block; margin: 0 0 8px; font-size: .85rem; color: var(--mute); }
+.ct-form input[type="text"], .ct-form textarea {
+  display: block; width: 100%; margin-bottom: 14px; padding: 10px 12px;
+  font: inherit; font-size: 16px;                        /* (16 px: a phone does not zoom in on focus) */
+  color: var(--ink); background: rgba(255, 255, 255, .03);
+  border: 1px solid var(--line); border-radius: 0; resize: vertical;
+}
+.ct-form input[type="text"]:focus, .ct-form textarea:focus { outline: none; border-color: rgba(244, 246, 251, .7); box-shadow: 0 0 10px rgba(255, 255, 255, .15); }
+.ct-form [aria-invalid="true"] { border-color: rgba(244, 246, 251, .9); box-shadow: 0 0 12px rgba(255, 255, 255, .3); }
+.ct-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ct-chip { position: relative; cursor: pointer; }
+.ct-chip input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.ct-chip span { display: inline-block; padding: 7px 12px; font-size: .82rem; color: var(--mute); border: 1px solid var(--line); transition: color .2s, border-color .2s, box-shadow .2s; }
+.ct-chip:hover span { color: var(--ink); }
+.ct-chip input:checked + span { color: var(--ink); border-color: rgba(244, 246, 251, .75); box-shadow: 0 0 10px rgba(255, 255, 255, .18); }
+.ct-chip input:focus-visible + span { outline: 1px solid var(--ink); outline-offset: 3px; }
+.ct-hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.ct-status { min-height: 1.4em; font-size: .82rem; color: var(--ink); }
+.ct-nav { display: flex; justify-content: space-between; margin-top: 8px; }
+.ct-nav button { padding: 9px 18px; font-size: .78rem; letter-spacing: .2em; text-transform: uppercase; border: 1px solid var(--line); color: var(--mute); }
+.ct-nav button:hover { color: var(--ink); }
+.ct-next { margin-left: auto; color: var(--ink) !important; border-color: rgba(244, 246, 251, .6) !important; }
+.ct-next:disabled { opacity: .5; cursor: default; }
+.ct-note { margin-top: 16px; font-size: .74rem; line-height: 1.5; color: var(--faint); }
+.ct-done { padding: 24px 0 8px; font-size: 1.05rem; text-shadow: 0 0 16px rgba(255, 255, 255, .5); }
+.ct-done:focus { outline: none; }
+.ct-fallback { padding-top: 14px; border-top: 1px solid var(--line); }
+#contact [hidden] { display: none !important; }
+
+/* phones: the glyph above the touch hint; the panel a full-height sheet that follows the keyboard */
+@media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
+  #contact-btn { right: 50%; bottom: 62px; transform: translateX(50%); padding: 12px; }
+  #contact-btn svg { width: 26px; height: 26px; }
+  #contact-btn .ct-label { display: none; }
+  .ct-panel {
+    left: 0; top: var(--vvt, 0px); width: 100%;
+    height: var(--vvh, 100dvh); max-height: none;
+    border-width: 1px 0 0; transform: translateY(100%);
+  }
+  #contact.open .ct-panel { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #contact-btn svg, #contact.sent .ct-glyph svg, body.contact-flare #canvas { animation: none; }
+}

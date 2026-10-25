@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Eight projects on the faces of a crystal: Arachnia, OpenRubixMachina, ThoughtSlayer, Choir of Souls, OpenShadowMan, Lightify, DoppelStream and Isoline." />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#000000" />
+  <title>Eight Faces</title>
+  <link rel="stylesheet" href="css/void.css" />
+</head>
+<body>
+  <canvas id="canvas" role="img" aria-label="A glowing white crystal with eight faces, one per project. Scroll to move toward a face and keep scrolling to read it. Keys 1 to 8 jump to a project, Escape goes back."></canvas>
+
+  <!-- Only used when WebGL is unavailable (see body.no-webgl). -->
+  <nav id="rail" aria-label="Projects"><ol id="rail-list"></ol></nav>
+  <aside id="dossier" aria-label="Project details" hidden></aside>
+
+  <div id="tip" role="presentation"></div>
+
+  <p id="hint" aria-hidden="true">Drag to spin &nbsp;·&nbsp; Scroll to approach &nbsp;·&nbsp; Esc returns &nbsp;·&nbsp; M sound</p>
+
+  <div id="live" class="sr" role="status" aria-live="polite"></div>
+
+  <div id="loader" aria-hidden="true"><span class="loader-dot"><span class="spin"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></span></div>
+
+  <noscript>
+    <p class="noscript">This portfolio draws its projects with WebGL and needs JavaScript enabled.</p>
+  </noscript>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/three.module.js"
+    }
+  }
+  </script>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
