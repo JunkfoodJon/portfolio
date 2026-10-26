@@ -35,15 +35,15 @@ const K_FOV = 2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2));
 // screen of 1440 device pixels or more (2048 still covers a 1080p one at full approach); ?ultra lets them
 // grow larger still (PlateRenderer.resize)
 // A phone or tablet (a mobile browser, iPadOS posing as a Mac, or a coarse pointer on a small screen) has a fraction
-// of a desktop's GPU and memory: it starts at 1.5 (1 where Android reports ≤ 4 GB), with plates up to 2048 (1536),
-// and no MSAA (Post) or large emblem targets (emblems.js)
+// of a desktop's GPU and memory: it starts at 1.5 (1 where Android reports ≤ 4 GB), with plates up to 1536 (1024): a plate is redrawn every frame,
+// and on a phone it is most of the frame; and no MSAA (Post) or large emblem targets (emblems.js)
 const UA = navigator.userAgent;
 export const MOBILE    = /Android|iPhone|iPad|iPod|Mobile/i.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1)
                       || (matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820);
 const LOW              = MOBILE && navigator.deviceMemory > 0 && navigator.deviceMemory <= 4;
 const DPR              = Math.max(window.devicePixelRatio || 1, 1);
 export const MAX_RATIO = MOBILE ? (LOW ? 1 : 1.5) : Math.min(2, Math.round(DPR * 1.25 * 20) / 20);
-export const PLATE_CAP = MOBILE ? (LOW ? 1536 : 2048) : Math.max(screen.height, innerHeight) * DPR >= 1440 ? 3072 : 2048;
+export const PLATE_CAP = MOBILE ? (LOW ? 1024 : 1536) : Math.max(screen.height, innerHeight) * DPR >= 1440 ? 3072 : 2048;
 export const ULTRA     = new URLSearchParams(location.search).has('ultra');
 
 const VERTS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map((v) => v.map((c) => c * R));

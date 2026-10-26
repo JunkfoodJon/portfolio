@@ -595,10 +595,8 @@ export class Pilot {
       const k = w.index(s), t = w.T[k], P = w.def.plates[t.id].portal;
       const px = t.O[0] + P[0] / t.S, py = t.O[1] + P[1] / t.S, [vx, vy] = at();
       const ex = 0.7 * hd.x / s, ey = 0.7 * hd.y / s, f = 1 - Math.exp(-dD * 8);
-      // (a phone's resting view frames a plate's words, its portal maybe beside it: the path's own place is never pulled from)
-      const [ox, oy] = w.phoneHs ? [vx - this.u.x / s, vy - this.u.y / s] : [px, py];
-      this.u.x += (lo(vx, Math.min(px - ex, ox), Math.max(px + ex, ox)) - vx) * s * f;
-      this.u.y += (lo(vy, Math.min(py - ey, oy), Math.max(py + ey, oy)) - vy) * s * f;
+      this.u.x += (lo(vx, px - ex, px + ex) - vx) * s * f;
+      this.u.y += (lo(vy, py - ey, py + ey) - vy) * s * f;
     };
     keep();
     // however far the hand takes it, the view's centre stays on the plate it is looking at (inside

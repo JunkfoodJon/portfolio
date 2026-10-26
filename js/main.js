@@ -89,7 +89,7 @@ if (!crystal) {
 } else {
   canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); document.body.classList.add('ctx-lost'); });
   canvas.addEventListener('webglcontextrestored', () => location.reload());
-  window.addEventListener('resize', () => { crystal.resize(); plates.resize(); world.setScreen(window.innerWidth, window.innerHeight); });
+  window.addEventListener('resize', () => { crystal.resize(); plates.resize(); });
 
   // the hint is there to be read once (a phone's names its own gestures)
   if (MOBILE && hintEl) hintEl.innerHTML = 'Drag to spin &nbsp;·&nbsp; Pinch to approach &nbsp;·&nbsp; Two-finger tap returns &nbsp;·&nbsp; Tap for sound';

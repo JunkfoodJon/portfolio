@@ -46,7 +46,7 @@
 import * as THREE from 'three';
 import { PROJECTS } from '../content.js';
 import { WALL } from '../wall.js';
-import { ULTRA, PLATE_CAP, MOBILE } from '../crystal.js';
+import { ULTRA, PLATE_CAP } from '../crystal.js';
 import { SDF_GLSL } from './sdf.js';
 import { CHOIR } from './choir.js';
 import { DOPPEL } from './doppel.js';
@@ -95,9 +95,6 @@ const READ_PX = 7;                          // an inscription starts arriving on
 const PLATE_SEEN = 0.3;                     // a plate's clock (uAge) starts once it is this large on screen
 const GLYPHS = '01<>/\\#%*+=:;[]{}|~^';
 const ATLAS = 2048;                         // px across the atlas arcs are set in while the view moves (see _arc)
-// a phone or tablet re-places each plate's words for its own screen (see _phone): at rest a plate unit is this
-// many screen px (body text, 0.026, 13 px), down to READ_MIN where a plate's words would not fit otherwise
-const READ = 500, READ_MIN = 380;
 // the canvas codes each letter by colour: red carries the ink over the black plaque each inscription sits
 // on, green its kind and size (below half an accent word, a figure; above it body; within each half the
 // letter's size, log 4–512 px) and blue its effect's progress (see the shader and FIELD_OUT)
@@ -130,21 +127,7 @@ export class World {
     this.approach = 1;                        // Pilot's approach to the face (0 orbit … 1 the whole face)
     this.caret = '';                          // the accent ink of the inscription being set
     this.fx = 1;                              // … and its effect's progress
-    this.screen = '';                         // the screen the words are laid out for (a phone's: see setScreen)
-    this.laidV = 0;                           // … counted each time it changes them
-    this.setScreen(window.innerWidth, window.innerHeight);
-  }
-
-  /**
-   * The screen the words are laid out for. A desktop shows every world as authored; a phone or tablet
-   * (MOBILE) places each plate's words for its own screen and comes to rest closer (_phone), so a new
-   * size or a turn of the device lays them out again.
-   */
-  setScreen(W, H) {
-    if (!MOBILE || `${W}x${H}` === this.screen) return;
-    this.screen = `${W}x${H}`; this.W = W; this.H = H;
-    this._laid.clear(); this.laidV++;
-    if (this.def) { const i = this.project; this.project = -1; this.setProject(i); }
+    this.laidV = 0;                           // counted each time the words are laid out again
   }
 
   static defs() { return Object.values(WORLDS); }
@@ -170,7 +153,7 @@ export class World {
     this.project = i;
     this.def = this.has(i) ? WORLDS[PROJECTS[i].id] : null;
     this.shown.clear(); this.seenAt.clear(); this.animating = false;
-    if (this.def) ({ T: this.T, homes: this.homes, text: this.text, hs: this.phoneHs } = this.prelayout(i));
+    if (this.def) ({ T: this.T, homes: this.homes, text: this.text } = this.prelayout(i));
   }
 
   /** Face i's chain and words, laid out once and kept (the loader lays out every world's while it waits). */
@@ -193,179 +176,15 @@ export class World {
       const f = pr / mr;
       T.push({ O: [cur.O[0] + (px - mx * f) / cur.S, cur.O[1] + (py - my * f) / cur.S], S: cur.S / f, id });
     }
-    const phone = MOBILE && this.W ? this._phone(def, project) : null;
     const homes = T.map((t) => {
-      const [hx, hy, hs] = phone ? phone.home[t.id] : P[t.id].home || [0, 0, 1];
+      const [hx, hy, hs] = P[t.id].home || [0, 0, 1];
       return { c: [t.O[0] + hx / t.S, t.O[1] + hy / t.S], s: t.S * hs };
     });
     const text = P.map((_, id) => []);
-    for (const it of phone ? phone.items : def.inscriptions(PROJECTS[project])) {
+    for (const it of def.inscriptions(PROJECTS[project])) {
       text[it.plate].push(typeof it.text === 'function' ? { ...it, dyn: it.text, cache: new Map() } : this._layout(it, def));
     }
-    return { T, homes, text, hs: phone && phone.home.map((h) => h[2]) };
-  }
-
-  /**
-   * A phone's (or tablet's) layout: its screen shows a plate's words, at a size it can read, only over a small
-   * part of the plate, so each plate's words are set again for it. In their own order they run as one column
-   * (two side by side where the screen is wide) around the plate's portal: above then below it on a tall screen,
-   * left then right of it on a wide one, inside the plate's medal (and the face, on the first plate), and the
-   * plate comes to rest framing them, its portal in view where it can be. Curved words are set straight, long
-   * lines wrap, and titles and figures no wider than the column. Nothing is reworded. The plate's art is not
-   * moved. Words the medal has too little room for are set smaller and seen closer, so they read the same
-   * (READ px a plate unit at their own size); only past half size do they read smaller, down to READ_MIN.
-   * → { home: per plate [x, y, s], items: the inscriptions, placed }
-   */
-  _phone(def, project) {
-    const W = this.W, H = this.H, tall = H >= W, px = Math.min(0.42 * H, 0.46 * W);
-    // (a title or figure keeps its title face should it have to be set smaller)
-    const all = def.inscriptions(PROJECTS[project]).map((it, i) => ({ ...it, _i: i, face: it.face || (it.count || it.size >= 0.04 ? 'title' : undefined) }));
-    const P = def.plates, F = def.fonts;
-    const c = this.ctx, REF = 100, sizes = new Map();
-    // an inscription's lines and widest line (plate units) at a size and column width, measured once
-    const measure = (it, size, w) => {
-      if (w != null) size = Math.max(size, (F ? MIN_PAINT : MIN_BODY) * K);   // (else _layout would widen the column with it)
-      const key = `${it._i}|${K}|${size.toFixed(4)}|${w == null ? '-' : w.toFixed(3)}`;
-      let m = sizes.get(key);
-      if (!m) {
-        // (words that change with depth are measured at their longest)
-        const text = typeof it.text === 'function' ? Array.from({ length: 4 * P.length }, (_, n) => it.text(n)).reduce((a, b) => (b.length > a.length ? b : a)) : it.text;
-        const l = this._layout({ ...it, text, size, w: w ?? undefined, arc: undefined, kmin: K }, def);
-        c.font = `${l.weight} ${REF}px ${l.family}`;
-        if ('letterSpacing' in c) c.letterSpacing = `${REF * l.track}px`;
-        const width = Math.max(...l.lines.map((x) => c.measureText(x).width)) * l.size / REF;
-        if ('letterSpacing' in c) c.letterSpacing = '0px';
-        sizes.set(key, (m = { n: l.lines.length, width, size: l.size, lh: l.lh }));
-      }
-      return m;
-    };
-    // the x range [lo, hi] a shape allows at height y (null: none)
-    const span = (shape, y) => {
-      const [mx, my, mr, ma] = shape;
-      if (shape.tri) { const m = 0.07; return y < -1 + m ? null : [-(2 - y) / Math.sqrt(3) + m / 0.866, (2 - y) / Math.sqrt(3) - m / 0.866]; }
-      if (ma) return Math.abs(y - my) > mr ? null : [mx - mr * ma, mx + mr * ma];
-      const d = mr * mr - (y - my) * (y - my);
-      return d <= 0 ? null : [mx - Math.sqrt(d), mx + Math.sqrt(d)];
-    };
-    let K = 1;                                                // the words' size, as a part of their own
-    const placeAll = (id, items, R) => {
-      const vw = W / R, vh = H / R, M = 20 / R, g = 25 / R, inset = 0.012;   // (margins: screen px)
-      const shapes = [P[id].medal.map((v, j) => (j === 2 ? v - inset : v))];
-      if (id === 0) shapes.push(Object.assign([], { tri: true }));
-      const [qx, qy, qr, qa] = P[id].portal, pw = qr * (qa || 1);
-      const box = [qx - pw - g, qy - qr - g, qx + pw + g, qy + qr + g];
-      // where the view may rest: around the portal, and across the plate should that not do
-      const cand = [];
-      for (const cx of [qx, 0]) for (let j = -12; j <= 12; j++) cand.push([cx, qy + j * vh / 16]);
-      const [mx, my, mr, ma] = P[id].medal, mw = mr * (ma || 1);
-      for (let y = my - mr; y <= my + mr; y += vh / 4) for (let x = mx - mw; x <= mx + mw; x += vw / 4) cand.push([x, y]);
-      cand.sort((a, b) => Math.hypot(a[0] - qx, a[1] - qy) - Math.hypot(b[0] - qx, b[1] - qy));
-      let best = null;
-      for (const [cx, cy] of cand) {
-        if (best && best.score < 10 && best.out.loss === 0) break;        // (nearest first: nothing later beats it)
-        const V = [cx - vw / 2 + M, cy - vh / 2 + M, cx + vw / 2 - M, cy + vh / 2 - M];
-        const inView = !(box[2] < V[0] || box[0] > V[2] || box[3] < V[1] || box[1] > V[3]);
-        let regions = !inView ? [V] : tall ? [[V[0], Math.max(V[1], box[3]), V[2], V[3]], [V[0], V[1], V[2], Math.min(V[3], box[1])]]
-          : [[V[0], V[1], Math.min(V[2], box[0]), V[3]], [Math.max(V[0], box[2]), V[1], V[2], V[3]]];
-        regions = regions.flatMap((r) => (r[2] - r[0] > 1.15 ? [[r[0], r[1], (r[0] + r[2]) / 2 - 0.03, r[3]], [(r[0] + r[2]) / 2 + 0.03, r[1], r[2], r[3]]] : [r]))
-          .filter((r) => r[2] - r[0] > 0.2 && r[3] - r[1] > 0.06);
-        const out = this._flow(items, regions, shapes, span, measure, K);
-        if (!out) continue;
-        // rest with the portal in the middle of the view where possible, else in view, else as near as can be
-        const ox = Math.abs(qx - cx) / (vw / 2), oy = Math.abs(qy - cy) / (vh / 2);
-        const score = (Math.max(ox, oy) <= 0.7 ? 0 : inView ? 1 : 2) * 10 + Math.hypot(qx - cx, qy - cy) + 6 * out.loss;
-        if (!best || score < best.score) best = { score, out, home: [cx, cy, R / px] };
-      }
-      return best;
-    };
-    const home = [], items = [];
-    P.forEach((_, id) => {
-      const mine = all.filter((it) => it.plate === id);
-      let best = null;
-      // where a plate's medal (not the screen) leaves too little room, its words are set smaller and the view
-      // comes closer by as much (K, R/K), so they read the same; only past half size do they read smaller
-      const ks = [1, 0.9, 0.8, 0.7, 0.6, 0.5];
-      for (const [k, R] of [...ks.map((k) => [k, READ / k]), ...[450, 415, READ_MIN].map((r) => [0.5, r / 0.5])]) {
-        K = k; best = placeAll(id, mine, R);
-        if (best) break;
-      }
-      if (!best) best = { home: [0, 0, 1], out: mine };          // (never met: kept as authored)
-      home[id] = best.home; items.push(...best.out);
-    });
-    return { home, items };
-  }
-
-  /**
-   * Flow inscriptions down a run of regions ([x0, y0, x1, y1], plate units) in order, each centred in the width
-   * the shapes leave it there. A heading, a figure or what follows a paragraph starts a new group, a little
-   * apart; short labels in a row share a line while it has room. A title or figure wider than its column is set
-   * smaller (out.loss sums how much). → the placed inscriptions, or null when they do not fit.
-   */
-  _flow(items, regions, shapes, span, measure, K = 1) {
-    const out = [];
-    let r = 0, y = regions[0]?.[3], prev = null, row = null;
-    out.loss = 0;
-    const width = (R, top, bot) => {
-      let lo = R[0], hi = R[2];
-      for (const s of shapes) for (const yy of [top, bot]) { const x = span(s, yy); if (!x) return 0; lo = Math.max(lo, x[0]); hi = Math.min(hi, x[1]); }
-      const q = 0.02 * K;
-      return { lo, hi, w: Math.floor((hi - lo) / q) * q };                 // (in steps, so a width is measured once)
-    };
-    const short = (it) => !it.w && !it.arc && !it.count && it.size < 0.03;
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      const size = K * (it.count ? Math.min(it.size, 0.07) : it.size >= 0.04 ? Math.min(it.size, 0.075) : it.size);
-      // a short label after another sits beside it, on its row, while the row has room
-      if (row && short(it) && short(prev)) {
-        const m = measure(it, size, null);
-        if (Math.abs(m.size - row.size) < 1e-6 && row.width + 0.9 * m.size + m.width <= row.room.w) {
-          const p = { ...it, y: row.y, size: m.size, hang: true, arc: undefined, w: undefined, _wd: m.width, kmin: K, _row: true };
-          row.items.push(p); row.width += 0.9 * m.size + m.width; out.push(p);
-          let x = (row.room.lo + row.room.hi) / 2 - row.width / 2;
-          for (const q of row.items) { q.x = x + q._wd / 2; x += q._wd + 0.9 * q.size; }
-          prev = it; continue;
-        }
-      }
-      const group = !prev || it.count || it.size >= 0.03 || (prev.w && !prev.count);
-      let placed = null, m = null, retry = false;
-      while (!placed && r < regions.length) {
-        const R = regions[r], first = y === R[3];
-        const top = y - (first ? 0 : (group ? 0.75 : 0.3) * size + 0.006);
-        // the width it has, then its height at that width, then the width again over that height
-        let est = 0.08, room = null;
-        m = null;
-        for (let pass = 0; pass < 3; pass++) {
-          room = width(R, top, top - est);
-          if (!room || room.w < 0.2) break;
-          const wrap = !!(it.w || it.arc || (measure(it, size, null).width > room.w && !it.count && it.size < 0.04));   // (a title or figure shrinks instead)
-          let sz = size;
-          for (let i = 0; i < 4 && !wrap; i++) { const wd = measure(it, sz, null).width; if (wd <= room.w) break; sz *= (room.w / wd) * 0.995; }
-          m = measure(it, sz, wrap ? room.w : null);
-          for (let i = 0; i < 4 && wrap && m.width > room.w + 1e-6; i++) { sz *= (room.w / m.width) * 0.995; m = measure(it, sz, room.w); }   // (one word wider than the column)
-          m = { ...m, wrap };
-          est = (m.n - 1) * m.size * m.lh + 1.24 * m.size;
-        }
-        if (room && room.w >= 0.2 && m && m.width <= room.w + 1e-6 && top - est >= R[1]) {
-          placed = { ...it, x: (room.lo + room.hi) / 2, y: top - 0.62 * m.size, size: m.size, hang: true, arc: undefined, w: m.wrap ? room.w : undefined, _wd: m.width, kmin: K,
-            _r: r, _first: first, _prev: prev, _at: i, _loss: Math.max(0, 1 - m.size / size) };
-          y = top - est;
-          row = short(it) && !m.wrap ? { y: placed.y, size: m.size, room, width: m.width, items: [placed] } : null;
-        } else {
-          // what belongs to the one before (a heading's text, a figure's label) takes it along to the next column
-          const back = out[out.length - 1];
-          if (!group && back && back._r === r && !back._first && !back._row) {
-            out.pop(); out.loss -= back._loss; prev = back._prev; i = back._at - 1; retry = true;
-          }
-          r++; y = regions[r]?.[3]; row = null;
-          if (retry) break;
-        }
-      }
-      if (retry) continue;
-      if (!placed) return null;
-      out.loss += placed._loss;
-      out.push(placed); prev = it;
-    }
-    return out;
+    return { T, homes, text };
   }
 
   /** A dynamic inscription laid out for depth n (a few kept: only three plates are ever on screen). */
@@ -468,8 +287,7 @@ export class World {
 
   /** Wrap once, in plate units, at a reference size (font metrics scale linearly). */
   _layout(it, def = this.def) {
-    // (kmin: a phone's words set smaller in plate units, and seen as much closer: see _phone)
-    const F = def?.fonts, km = it.kmin || 1, minB = (F ? MIN_PAINT : MIN_BODY) * km, minL = (F ? MIN_LABEL + 0.003 : MIN_LABEL) * km;
+    const F = def?.fonts, minB = F ? MIN_PAINT : MIN_BODY, minL = F ? MIN_LABEL + 0.003 : MIN_LABEL;
     if (it.w && !it.arc && it.size < minB) {                    // small body text grows, its column with it
       const k = minB / it.size;
       it = { ...it, size: minB, w: it.w * k };
@@ -527,7 +345,7 @@ export class World {
    * them in reverse.
    */
   _depthIn(L) {
-    const hs = this.phoneHs?.[L.id] ?? (this.def.plates[L.id].home?.[2] || 1);
+    const hs = this.def.plates[L.id].home?.[2] || 1;
     const gentle = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return 0.65 * t + 0.35 * t * t * (3 - 2 * t); };
     const d = gentle(-2.15, -0.03, Math.log(L.s / hs));
     return this.loops === 0 && L.k === 0 ? Math.min(d, gentle(0.5, 1.0, this.approach)) : d;
