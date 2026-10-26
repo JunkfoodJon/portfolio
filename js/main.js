@@ -106,21 +106,34 @@ if (!crystal) {
   // driver has it), and nothing is drawn with one before it is in: a draw would wait on it, and the loader
   // with it. Meanwhile each side's words are laid out; then each side whose programs are in is drawn once
   // off screen and its face lights in the loader. One step a frame at most, asked of the driver every
-  // 50 ms, never waited on
-  plates.prepare();
+  // 50 ms, never waited on.
+  // Without parallel compile (Firefox) a program compiles on the main thread the first time it is drawn, and a
+  // world's takes seconds: those are left out of the loader, which opens once the words are laid out, and each is
+  // compiled only once a side is approached, when its hold has come to a stop (Pilot.holding)
+  const parallel = crystal.renderer.extensions.has('KHR_parallel_shader_compile');
+  if (parallel) plates.prepare();
   const emblemsIn = new Array(8).fill(false);
   const emblems = faces.prepare();
   emblems.forEach((p, i) => p.then(() => { emblemsIn[i] = true; }));
   let sceneIn = false;                                   // the crystal, the bloom and every emblem
   Promise.all([crystal.prepare(), ...emblems]).then(() => { sceneIn = true; });
   const laid = new Array(8).fill(false);
-  let nextPoll = 0, shared = false, allWarm = false, dismissed = false;
+  let nextPoll = 0, shared = false, allWarm = false, booted = false, dismissed = false;
   const warmStep = (now) => {
     if (allWarm || now < nextPoll) return false;
     nextPoll = now + 50;
     const l = laid.indexOf(false);
-    if (l >= 0) { world.prelayout(l); laid[l] = true; return true; }
+    if (l >= 0) { world.prelayout(l); laid[l] = true; if (!parallel) loaderFaces[l]?.classList.add('on'); return true; }
     if (!shared) { if (plates.ready()) { plates.warmShared(); shared = true; return true; } return false; }
+    if (!parallel) {
+      if (!booted) { booted = true; score.prefetch(); }
+      const f = pilot.holding;
+      if (f < 0 || warmed[f]) return false;
+      plates.warm(world.defOf(f));
+      warmed[f] = true;
+      if (warmed.every(Boolean)) allWarm = true;
+      return true;
+    }
     for (let i = 0; i < 8; i++) {
       if (warmed[i] || !emblemsIn[i] || !plates.ready(world.defOf(i))) continue;
       plates.warm(world.defOf(i));
@@ -176,7 +189,7 @@ if (!crystal) {
       else if (crystal.post.quality > 0) crystal.post.setQuality(0);
     }
 
-    if (frameCount++ >= 3 && !dismissed && (allWarm || now - startedAt > WAIT_CAP)) {
+    if (frameCount++ >= 3 && !dismissed && (allWarm || booted || now - startedAt > WAIT_CAP)) {
       dismissed = true;
       dismissLoader(Math.max(0, 900 - (performance.now() - startedAt)));
     }

@@ -130,6 +130,7 @@ export class Pilot {
     this.leaving = false;
     this.rewind = null;                  // Esc's timed reverse zoom while it runs
     this.wantD = null;                   // where a held approach was going (see D_HOLD)
+    this.holding = -1;                   // the face whose held approach has come to its stop, or −1
     this.aimFresh = true;                // the cursor has moved since a wheel last chose a face
     this.respin = false;                 // spun by hand part way in: re-aim at the face in front once it settles
 
@@ -402,6 +403,7 @@ export class Pilot {
       else if (!held && this.wantD != null) { if (this.face >= 0 && this.Dt >= D_HOLD - 1e-3) this.Dt = Math.max(this.Dt, this.wantD); this.wantD = null; }
       else if (held && this.Dt < D_HOLD - 1e-3) this.wantD = null;
       cr.setWaiting(held && this.D > 0.05 ? this.face : -1);
+      this.holding = held && this.wantD != null && this.D > D_HOLD - 0.02 ? this.face : -1;
       const [d, v] = damp(this.D, this.Dt, this.Dv, this.smoothT, dt);
       this.D = d; this.Dv = v;
       let panSettled = true;
