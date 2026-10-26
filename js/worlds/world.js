@@ -889,6 +889,7 @@ function fragment(def) {
   uniform float uMusic;        // how loud the world's music is now, 0–1, or −1 when none is playing (PlateRenderer.setMusic)
   uniform float uTime; uniform vec2 uPointer;
   uniform vec3 uArt; uniform vec2 uArtV; uniform float uArtT;   // the art's pointer (see PlateRenderer.render)
+  uniform vec2 uTilt;                                         // a phone's tilt (−1..1; 0 elsewhere, see Pilot._tilt)
   uniform vec3 uWall; uniform float uPx; uniform float uBright;
   uniform int uLevels; uniform int uId[${MAX_LEVELS}]; uniform vec3 uView[${MAX_LEVELS}]; uniform vec4 uPortal[${MAX_LEVELS}];
   uniform float uDepth[${MAX_LEVELS}]; uniform float uLoop[${MAX_LEVELS}]; uniform float uAge[${MAX_LEVELS}]; uniform vec3 uPal[4];
@@ -1131,7 +1132,7 @@ export class PlateRenderer {
     this.uniforms = {
       uText: { value: textTexture },
       uTime: { value: 0 }, uPointer: { value: new THREE.Vector2() },
-      uArt: { value: new THREE.Vector3() }, uArtV: { value: new THREE.Vector2() }, uArtT: { value: 0 },
+      uArt: { value: new THREE.Vector3() }, uArtV: { value: new THREE.Vector2() }, uArtT: { value: 0 }, uTilt: { value: new THREE.Vector2() },
       uVN: { value: 0 }, uVBox: { value: Array.from({ length: MAX_VERDICTS }, () => new THREE.Vector4()) }, uVId: { value: new Array(MAX_VERDICTS).fill(0) },
       uWall: { value: new THREE.Vector3(WALL.cu, WALL.cv, WALL.ru) },
       uPx: { value: 1 }, uBright: { value: 0.42 },
@@ -1295,7 +1296,7 @@ export class PlateRenderer {
     // the art's pointer (Pilot._artPointer): wall units, its velocity and how present it is; and, for a world that
     // is driven by it (`pointer(q, id)`: 0–1 at plate point q of the plate in view), that drive summed over time
     if (art) {
-      u.uArt.value.set(art.x, art.y, art.on); u.uArtV.value.set(art.vx, art.vy);
+      u.uArt.value.set(art.x, art.y, art.on); u.uArtV.value.set(art.vx, art.vy); u.uTilt.value.set(art.tx, art.ty);
       let L = levels[0];
       for (let i = 1; L && i < levels.length; i++) {                     // (the plate the pointer is over: as the shader picks it)
         const V = levels[i - 1], P = V.portal, dx = V.cx + art.x / V.s - P[0], dy = V.cy + art.y / V.s - P[1];

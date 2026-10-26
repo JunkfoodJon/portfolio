@@ -298,7 +298,7 @@ float plate1(vec2 q, float g) {
     }
     v = max(v, ink(iris, w * 1.4, g));
     v = max(v, ink(r - 0.11, w * 1.2, g));                              // the pupil's rim (inside it, the stream)
-    if (length((q - vec2(-0.17, 0.15)) / vec2(1.0, 0.7)) < 0.035) v = 0.9;   // a catchlight
+    if (length((q - vec2(-0.17, 0.15) - uTilt * vec2(0.07, 0.05)) / vec2(1.0, 0.7)) < 0.035) v = 0.9;   // a catchlight (it slides as a phone tilts)
   }
   v = max(v, ink(eye, w * 1.8, g));
   float crease = max(length(eu) - ER - 0.09, 0.05 - q.y);                // the upper lid's fold

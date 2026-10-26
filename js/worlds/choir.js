@@ -106,6 +106,9 @@ float chAshlar(vec2 q, float g) {
 // glass: lit from above, engraved along the opening's own isolines; lead cames in diamond quarries
 float chGlass(vec2 q, float d, float g, float seed) {
   float light = 0.2 + 0.25 * fbm3(vec3(q * 3.5, seed)) + 0.4 * smoothstep(-0.7, 1.0, q.y);
+  // a tilted phone catches the sun on the glass: a band that sweeps across it as it leans
+  float lean = length(uTilt);
+  light += 0.3 * smoothstep(0.05, 0.4, lean) * exp(-pow(q.x + 0.5 * q.y - 1.3 * uTilt.x + 0.8 * uTilt.y, 2.0) / 0.03);
   float v = engrave(-d, light, g, 0.017);
   vec2 r = vec2(q.x + q.y, q.x - q.y) * (0.70710678 / 0.12);
   vec2 l = abs(fract(r) - 0.5) * 0.12;

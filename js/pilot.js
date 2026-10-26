@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import { PROJECTS } from './content.js';
 import { WALL, S_MAX } from './wall.js';
-import { INRADIUS, OCTA_Y } from './crystal.js';
+import { INRADIUS, OCTA_Y, MOBILE } from './crystal.js';
 
 const ORBIT_Z     = 9.4;
 const AUTO        = 0.17;       // rad/s about world Y when idle
@@ -36,6 +36,8 @@ const FRICTION    = 0.7;        // 1/s — long, free coast after a flick
 const FADE        = 5;          // 1/s — what is left of a coast once a face is being approached
 const MAX_SPIN    = 10;         // rad/s
 const D_CLOSE     = 1.5;
+const TILT        = 22;         // degrees: a phone tilted this far from how it is held takes the pointer to the screen's edge
+const D_SPIN      = 0.6;        // a spin begun at a world's whole face eases the view back to here (see _move)
 const D_HOLD      = 0.5;        // a side not yet prepared is held here, just short of its plates showing (infoOn)
 const OCT         = 4.5;        // D units per... 1/OCT D = one doubling of s
 const D_MAX       = D_CLOSE + Math.log2(S_MAX) / OCT;
@@ -138,7 +140,9 @@ export class Pilot {
     this.fingerAt = null;                // a finger's place (−1..1) the pointer eases to; null: no finger, back to the centre
     this.touch = false;                  // the last pointer was a finger
     this.hoverAt = null;                // the cursor's last place over the canvas (null: off it)
-    this.art = { x: 0, y: 0, vx: 0, vy: 0, on: 0 };   // where a world's art feels the pointer (see _artPointer)
+    this.art = { x: 0, y: 0, vx: 0, vy: 0, on: 0, tx: 0, ty: 0 };   // where a world's art feels the pointer (see _artPointer); tx, ty: a phone's tilt
+    this.tilt = null;                    // a phone's tilt (−1..1) against how it has lately been held (see _tilt); null: none read yet
+    this._orient = null;                 // its last reading, and how it is held (the reading, slowly followed)
     this._picked = { q: new THREE.Quaternion(), D: -1 };   // the pose it was last picked at
     this.drag = null;
     this.samples = [];
@@ -488,8 +492,10 @@ export class Pilot {
     else cr.quaternion.copy(this.qBase);
 
     // a finger has no resting place to follow: the pointer eases toward it while it touches, home once lifted
-    if (this.touch) {
-      const f = this.fingerAt || { x: 0, y: 0 }, k = 1 - Math.exp(-dt * 3);
+    // (on a phone that reads its tilt, toward the tilt instead)
+    this._tilt(dt);
+    if (this.touch || this.tilt) {
+      const f = this.fingerAt || this.tilt || { x: 0, y: 0 }, k = 1 - Math.exp(-dt * 3);
       this.pointer.x += (f.x - this.pointer.x) * k; this.pointer.y += (f.y - this.pointer.y) * k;
     }
 
@@ -713,6 +719,17 @@ export class Pilot {
     c.addEventListener('pointerleave', () => { if (!this.drag) { this.hoverAt = null; this.crystal.setHover(-1); this.wall.hover = null; this.onLabel(-1); } });
     c.addEventListener('wheel', (e) => { if (this.paused) e.preventDefault(); else this._wheel(e); }, { passive: false });
     document.addEventListener('gesturestart', (e) => e.preventDefault());   // (Safari's own pinch: the page never zooms)
+    // a phone's tilt (only a phone's): iOS asks leave on the first tap, everything else reads it at once
+    if (MOBILE && 'DeviceOrientationEvent' in window) {
+      window.addEventListener('deviceorientation', (e) => {
+        if (e.beta == null || e.gamma == null) return;
+        if (!this._orient) this._orient = { b: e.beta, g: e.gamma, b0: e.beta, g0: e.gamma };
+        else { this._orient.b = e.beta; this._orient.g = e.gamma; }
+      });
+      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        window.addEventListener('touchend', () => DeviceOrientationEvent.requestPermission().catch(() => {}), { once: true });
+      }
+    }
     // (Enter or Space on a focused control — the contact glyph — presses it, not the crystal)
     window.addEventListener('keydown', (e) => {
       if (this.paused || ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('button'))) return;
@@ -784,7 +801,11 @@ export class Pilot {
     const d = this.drag;
     if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > d.tap) {
       d.moved = true;
-      if (this.D < 0.97) d.rotate = true; else d.pan = true;
+      // (at a world's whole face, where Esc's rewind comes to rest, the hand still spins, and the view eases back
+      // to where the crystal turns freely, as a hand would scroll it back first: it pans only once inside)
+      if (this.D < 0.97) d.rotate = true;
+      else if (this.worldOn && this.loops === 0 && this.D <= 1.03) d.rotate = d.out = true;
+      else d.pan = true;
       // part way in, the hand takes the crystal from the turn to its face: it spins as it is shown, as in orbit
       // (the turn starts again from here; see _lockFace)
       if (d.rotate && this.face >= 0) { this.qBase.copy(this.crystal.quaternion); this.w0 = smooth(0.06, 0.96, Math.min(this.D, 1)); }
@@ -799,9 +820,11 @@ export class Pilot {
     this.idle = 0;
 
     if (d.rotate) {
-      const k = this._slow();
+      // (begun at the whole face: the hand has it at full turn, and the turn to the face lets go as the view eases back)
+      const k = d.out ? 1 : this._slow();
       this._rotate(dx * SENS * k, dy * SENS * k);
-      this.goal = null; this.Dt = this.D;
+      this.goal = null; this.Dt = d.out ? Math.min(this.D, D_SPIN) : this.D;
+      if (d.out) this.w0 = smooth(0.06, 0.96, D_SPIN);
     } else if (d.pan && this.face >= 0) {
       this._pan(dx, dy);
       this.goal = null; this.Dt = this.D;
@@ -879,6 +902,10 @@ export class Pilot {
     if (this.worldOn && this.face >= 0 && this.hoverAt && !(this.touch && this.pointers.size === 0)) {
       hit = this.crystal.pick(this.hoverAt.x, this.hoverAt.y);
       if (hit && hit.face !== this.face) hit = null;
+    } else if (this.worldOn && this.face >= 0 && this.tilt && this.pointers.size === 0) {
+      // no finger down: a tilted phone's pointer is where a ball would roll to
+      hit = this.crystal.pick((this.pointer.x + 1) / 2 * window.innerWidth, (1 - this.pointer.y) / 2 * window.innerHeight);
+      if (hit && hit.face !== this.face) hit = null;
     }
     const k = 1 - Math.exp(-dt * 8);
     if (hit) {
@@ -890,6 +917,24 @@ export class Pilot {
       A.vx += ((A.x - x0) * s - A.vx) * k; A.vy += ((A.y - y0) * s - A.vy) * k;
     } else { A.vx *= 1 - k; A.vy *= 1 - k; }
     A.on += ((hit ? 1 : 0) - A.on) * (1 - Math.exp(-dt * 4));
+  }
+
+  /**
+   * A phone's tilt, as a pointer (−1..1, +x right, +y up): how far it leans from how it has been held (the
+   * reading followed over a few seconds, so any way of holding it rests at the centre), turned to the screen's
+   * orientation; a ball on the screen would roll that way. It is the art's too (art.tx, ty: eased).
+   */
+  _tilt(dt) {
+    const o = this._orient;
+    if (!o) return;
+    const f = 1 - Math.exp(-dt / 3);
+    o.b0 += (o.b - o.b0) * f; o.g0 += (o.g - o.g0) * f;
+    const dx = (o.g - o.g0) / TILT, dy = -(o.b - o.b0) / TILT;
+    const a = ((screen.orientation?.angle ?? window.orientation ?? 0) * Math.PI) / 180;
+    const cl = (v) => Math.max(-1, Math.min(1, v));
+    this.tilt = { x: cl(dx * Math.cos(a) - dy * Math.sin(a)), y: cl(dx * Math.sin(a) + dy * Math.cos(a)) };
+    const k = 1 - Math.exp(-dt * 3), A = this.art;
+    A.tx += (this.tilt.x - A.tx) * k; A.ty += (this.tilt.y - A.ty) * k;
   }
 
   _hover(x, y) {
