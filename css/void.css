@@ -87,6 +87,16 @@ body:not(.no-webgl) #dossier { display: none; }
   transition: opacity .9s ease, visibility .9s;
 }
 #loader.out { opacity: 0; visibility: hidden; }
+/* Without parallel compile (Firefox) the loader comes back, veiled, over a side while its world is built
+   (main.js), with a word on why: the page stands still meanwhile, and only the loader moves */
+#loader.veil { background: rgba(0, 0, 0, .62); transition-duration: .3s; }
+.loader-note {
+  position: absolute; left: 0; right: 0; top: calc(50% + 58px); margin: 0;
+  text-align: center; font-size: .7rem; letter-spacing: .26em; text-transform: uppercase;
+  color: var(--faint);
+  display: none;
+}
+#loader.veil .loader-note { display: block; }
 /* The crystal in miniature: eight faces outlined in light, turning and breathing. Each face fills as its
    side is ready (main.js). Only transform and opacity move, so the compositor runs it however busy the
    page is. A face is a 28 px triangle in a 40 × 36.25 box (6 px for its glow), hinged on its equator edge */

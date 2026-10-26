@@ -75,11 +75,11 @@ try {
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') dossier.close(); });
 }
 
-function dismissLoader(delay) {
+function dismissLoader(delay, keep = false) {
   setTimeout(() => {
     pilot?.startIntro();
     loader.classList.add('out');
-    setTimeout(() => loader.remove(), 900);
+    if (!keep) setTimeout(() => loader.remove(), 900);   // (kept where it comes back over a side, see warmStep)
   }, delay);
 }
 
@@ -109,9 +109,14 @@ if (!crystal) {
   // 50 ms, never waited on.
   // Without parallel compile (Firefox) a program compiles on the main thread the first time it is drawn, and a
   // world's takes seconds: those are left out of the loader, which opens once the words are laid out, and each is
-  // compiled only once a side is approached, when its hold has come to a stop (Pilot.holding)
+  // compiled only once a side is approached, when its hold has come to a stop (Pilot.holding). The page stands
+  // still while it is, so the loader comes back over the side first, veiled (VEIL ms to fade in: the compositor
+  // keeps it turning through the compile), and its face lights once the side is in
   const parallel = crystal.renderer.extensions.has('KHR_parallel_shader_compile');
   if (parallel) plates.prepare();
+  else loader.querySelector('.loader-note').textContent = `${/Firefox\//.test(navigator.userAgent) ? 'Firefox' : 'This browser'} builds each world from scratch — this takes a moment`;
+  const VEIL = 400;
+  let veilAt = -1;
   const emblemsIn = new Array(8).fill(false);
   const emblems = faces.prepare();
   emblems.forEach((p, i) => p.then(() => { emblemsIn[i] = true; }));
@@ -123,14 +128,22 @@ if (!crystal) {
     if (allWarm || now < nextPoll) return false;
     nextPoll = now + 50;
     const l = laid.indexOf(false);
-    if (l >= 0) { world.prelayout(l); laid[l] = true; if (!parallel) loaderFaces[l]?.classList.add('on'); return true; }
+    if (l >= 0) { world.prelayout(l); laid[l] = true; return true; }
     if (!shared) { if (plates.ready()) { plates.warmShared(); shared = true; return true; } return false; }
     if (!parallel) {
       if (!booted) { booted = true; score.prefetch(); }
       const f = pilot.holding;
-      if (f < 0 || warmed[f]) return false;
+      if (f < 0 || warmed[f]) { if (veilAt >= 0) { veilAt = -1; loader.classList.add('out'); } return false; }
+      if (veilAt < 0) {
+        if (!dismissed || !loader.classList.contains('out')) return false;   // (the opening loader is still on its way out)
+        veilAt = now; loader.classList.add('veil'); loader.classList.remove('out');
+        return false;
+      }
+      if (now - veilAt < VEIL) return false;
       plates.warm(world.defOf(f));
       warmed[f] = true;
+      loaderFaces[f]?.classList.add('on');
+      veilAt = -1; loader.classList.add('out');
       if (warmed.every(Boolean)) allWarm = true;
       return true;
     }
@@ -191,7 +204,7 @@ if (!crystal) {
 
     if (frameCount++ >= 3 && !dismissed && (allWarm || booted || now - startedAt > WAIT_CAP)) {
       dismissed = true;
-      dismissLoader(Math.max(0, 900 - (performance.now() - startedAt)));
+      dismissLoader(Math.max(0, 900 - (performance.now() - startedAt)), !parallel);
     }
   };
   requestAnimationFrame(frame);
