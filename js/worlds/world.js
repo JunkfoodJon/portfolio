@@ -182,10 +182,15 @@ export class World {
       const [hx, hy, hs] = P[t.id].home || [0, 0, 1];
       return { c: [t.O[0] + hx / t.S, t.O[1] + hy / t.S], s: t.S * hs };
     });
-    const text = P.map((_, id) => []);
-    for (const it of def.inscriptions(PROJECTS[project])) {
-      text[it.plate].push(typeof it.text === 'function' ? { ...it, dyn: it.text, cache: new Map() } : this._layout(it, def));
-    }
+    // the words are laid out once per chapter: the project as it is, then each of its `deeper` chapters over it
+    // (the same slots in the same places, so each loop of the zoom reads on where the last one left off)
+    const p = PROJECTS[project], chapters = [p, ...(p.deeper || []).map((c) => ({ ...p, ...c }))];
+    const text = P.map(() => chapters.map(() => []));
+    chapters.forEach((q, ch) => {
+      for (const it of def.inscriptions(q)) {
+        text[it.plate][ch].push(typeof it.text === 'function' ? { ...it, dyn: it.text, cache: new Map() } : this._layout(it, def));
+      }
+    });
     return { T, homes, text };
   }
 
@@ -389,8 +394,9 @@ export class World {
         else c.arc(X(mx), Y(my), mr * k, 0, Math.PI * 2);
         c.clip();
       }
-      const n = n0, todo = [], depth = this._depthIn(L), count = this.text[L.id].length;
-      this.text[L.id].forEach((raw, idx) => {
+      const words = this.text[L.id], ch = Math.floor(n0 / this.N) % words.length;   // the chapter this loop reads
+      const n = n0, todo = [], depth = this._depthIn(L), count = words[ch].length;
+      words[ch].forEach((raw, idx) => {
         const it = raw.dyn ? this._dyn(raw, n) : raw;
         const px = it.size * k, seen = px * this.span;
         // its effect's progress (blue): the plate's depth, the words a little staggered down the list

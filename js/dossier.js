@@ -249,14 +249,16 @@ export class Dossier {
   }
 
   _panel(id, p) {
+    // the project, then each of its deeper chapters (the faces read them on later loops of the zoom)
+    const all = [p, ...(p.deeper || []).map((c) => ({ ...p, ...c }))];
     if (id === 'overview') {
-      return [
-        h('p', { class: 'dz-lead', text: p.summary }),
-        h('ul', { class: 'dz-list' }, p.highlights.map((t) => h('li', { text: t }))),
-      ];
+      return all.flatMap((q) => [
+        h('p', { class: 'dz-lead', text: q.summary }),
+        h('ul', { class: 'dz-list' }, q.highlights.map((t) => h('li', { text: t }))),
+      ]);
     }
     if (id === 'inside') {
-      return [h('div', { class: 'dz-acc' }, p.inside.map((s, k) => {
+      return [h('div', { class: 'dz-acc' }, all.flatMap((q) => q.inside).map((s, k) => {
         const open = k === 0;
         const btn = h('button', { type: 'button', class: 'dz-acc-btn', 'aria-expanded': open ? 'true' : 'false', 'aria-controls': `acc-${k}` },
           h('span', { class: 'dz-acc-n', text: pad(k + 1), 'aria-hidden': 'true' }), h('span', { text: s.title }), h('span', { class: 'dz-acc-ico', 'aria-hidden': 'true' }));
@@ -277,7 +279,7 @@ export class Dossier {
     }
     // numbers
     return [
-      h('div', { class: 'dz-stats' }, p.stats.map((s) => h('div', { class: 'dz-stat' },
+      h('div', { class: 'dz-stats' }, all.flatMap((q) => q.stats).map((s) => h('div', { class: 'dz-stat' },
         h('div', { class: 'dz-stat-v' },
           h('span', { class: 'dz-count', 'data-v': s.value, 'data-d': s.decimals || 0, text: this._fmt(s.value, s.decimals || 0) }),
           h('span', { class: 'dz-stat-u', text: s.suffix })),

@@ -167,6 +167,7 @@ body.no-webgl #dossier { max-width: 720px; margin: 0 auto 80px; padding: 8px 22p
 .dz-tab-num { display: none; }
 .dz-body { padding: 20px 0 8px; }
 .dz-lead { font-size: 1.05rem; line-height: 1.65; }
+.dz-list + .dz-lead { margin-top: 28px; }
 .dz-list { margin-top: 16px; display: grid; gap: 10px; }
 .dz-list li { color: var(--mute); line-height: 1.55; padding-left: 16px; position: relative; }
 .dz-list li::before { content: ""; position: absolute; left: 0; top: .7em; width: 6px; height: 1px; background: var(--ink); }
