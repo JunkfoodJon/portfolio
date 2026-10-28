@@ -166,8 +166,18 @@ if (!crystal) {
   document.addEventListener('visibilitychange', () => { last = performance.now(); });
   bench?.attach({ crystal, faces, world, plates, pilot, mobile: MOBILE, ready: (i) => warmed[i], setTime: (v) => { t = v; } });
 
+  // a screen that refreshes faster than ~90 Hz (a 120 Hz phone or laptop) is drawn every other frame while nothing is
+  // being touched or flown: the idle turn, the drift of the plates and the words arriving are as smooth at 60 fps, for
+  // half the work and heat. Any input (for a second after it), a fly, a coast or Esc's rewind has every frame again
+  let rafLast = performance.now(), rafGap = 1000 / 60, skipped = false, inputAt = -1e9;
+  for (const ev of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchmove']) window.addEventListener(ev, () => { inputAt = performance.now(); }, { passive: true });
+
   const frame = (now) => {
     requestAnimationFrame(frame);
+    rafGap += (now - rafLast - rafGap) * 0.1; rafLast = now;
+    const busy = now - inputAt < 1000 || pilot.goal || pilot.rewind || pilot.drag || Math.abs(pilot.Dv) > 1e-3 || Math.hypot(pilot.spin.x, pilot.spin.y) > 0.3;
+    if (rafGap < 11 && !busy && !skipped) { skipped = true; return; }
+    skipped = false;
     // real elapsed time (capped only against tab-switch jumps) so a slow GPU gets fewer frames, not slow motion
     const dt = Math.max(0, Math.min((now - last) / 1000, 0.2));
     last = now;
@@ -184,7 +194,11 @@ if (!crystal) {
     if (!sceneIn) return;
     crystal.facing(facing);
     faces.render(t, dt, facing, pilot.focused, pilot.emblemOn);
-    if (pilot.worldOn && pilot.infoOn > 0.01) { plates.setMusic(score.level(), dt); plates.render(world, pilot.levels, t, pilot.pointer, pilot.art); }
+    if (pilot.worldOn && pilot.infoOn > 0.01) {
+      plates.setMusic(score.level(), dt);
+      plates.render(world, pilot.levels, t, pilot.pointer, pilot.art, crystal.faceScreenMap());
+      crystal.setInfo(plates.texture, plates.screen);           // (drawn straight onto the screen, or into its square)
+    }
     crystal.render();
 
     // frame-time governor, one way only (it never steps back up, so it cannot oscillate): after ~1.5 s

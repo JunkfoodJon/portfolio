@@ -894,6 +894,12 @@ function fragment(def) {
   uniform int uLevels; uniform int uId[${MAX_LEVELS}]; uniform vec3 uView[${MAX_LEVELS}]; uniform vec4 uPortal[${MAX_LEVELS}];
   uniform float uDepth[${MAX_LEVELS}]; uniform float uLoop[${MAX_LEVELS}]; uniform float uAge[${MAX_LEVELS}]; uniform vec3 uPal[4];
   in vec2 vUv;
+  // drawn straight onto the screen (uScreen, see PlateRenderer.render): a pixel's uv is where the face's own
+  // perspective puts it (uH, from drawing-buffer pixels), so the plate is shaded once per pixel it shows
+  uniform float uScreen; uniform mat3 uH;
+  vec2 plateUv() { if (uScreen < 0.5) return vUv; vec3 h = uH * vec3(gl_FragCoord.xy, 1.0); return h.xy / h.z; }
+  #define vUv gUv
+  vec2 gUv;
   out vec4 outColor;
   float gAge;                  // seconds since the plate being drawn came into view (plates may animate in by it)
   int gPlate;                  // which plate is being drawn (a world's text effect may differ by plate)
@@ -987,6 +993,7 @@ ${ids}
     return 0.0;
   }
   void main() {
+    gUv = plateUv();
     vec2 a = (vUv - uWall.xy) / uWall.z;                     // wall-screen units
     int lv = 0;
     for (int i = 1; i < ${MAX_LEVELS}; i++) {
@@ -1146,6 +1153,7 @@ export class PlateRenderer {
       uLoop: { value: new Array(MAX_LEVELS).fill(0) },
       uAge: { value: new Array(MAX_LEVELS).fill(0) },
       uPal: { value: Array.from({ length: 4 }, () => new THREE.Color(1, 1, 1)) },
+      uScreen: { value: 0 }, uH: { value: new THREE.Matrix3() },
     };
 
     // the text field (see FIELD): two seed targets the flood ping-pongs between, and the field itself
@@ -1249,7 +1257,8 @@ export class PlateRenderer {
     r.setRenderTarget(saved);
   }
 
-  get texture() { return this.target.texture; }
+  /** What the face shows: the screen target while the plate is drawn straight onto the screen (see render), else the square one. */
+  get texture() { return (this.screen ? this.screenTarget : this.target).texture; }
 
   /**
    * Size the target to what the face can show at full approach (≈1.45 × the drawing-buffer height for
@@ -1267,6 +1276,13 @@ export class PlateRenderer {
     const fit = (h, k, cap) => Math.max(768, Math.min(cap, Math.round((1.45 * h * k) / 128) * 128));
     const screen = window.innerHeight * Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
     this.uniforms.uPx.value = 1 / (WALL.ru * fit(screen, 1, PLATE_CAP));
+    const S = this.screenTarget;                                   // (the drawing buffer's own size, a texel a pixel)
+    if (!S || S.width !== buf.x || S.height !== buf.y) {
+      S?.dispose();
+      this.screenTarget = new THREE.WebGLRenderTarget(buf.x, buf.y, {
+        minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false, depthBuffer: false,
+      });
+    }
     const size = fit(buf.y * this.scale, this.reach, ULTRA ? 4096 : PLATE_CAP);
     if (size === this.size) return;
     this.size = size;
@@ -1284,13 +1300,30 @@ export class PlateRenderer {
   /** The square of face uv the target (and the words' canvas, World.setRegion) covers: { x0, y0, span }, or null for the whole. */
   setRegion(m) {
     const { x0 = 0, y0 = 0, span = 1 } = m || {};
+    this.region = { x0, y0, span };
     this.uniforms.uWall.value.set((WALL.cu - x0) / span, (WALL.cv - y0) / span, WALL.ru / span);
   }
 
   get pxPerUnit() { return this.uniforms.uWall.value.z * this.size; }
 
-  render(world, levels, t, pointer, art = null) {
+  /**
+   * view (Crystal.faceScreenMap): the face's map from drawing-buffer pixels to face uv, H, and how much face uv a pixel
+   * spans, perPx. Where the square target would show at no more than about a texel a pixel, and drawing the buffer's
+   * pixels costs no more than its own, the plate is drawn straight onto the screen instead (`screen`): shaded once per
+   * pixel the face shows, which the face then reads a pixel for a pixel, with no resampling between them and no
+   * mipmaps to build. Further out (orbit, early in the approach) the face is small, and the square target and its
+   * mipmaps are what keep the line work from shimmering, so that is drawn as before.
+   */
+  render(world, levels, t, pointer, art = null, view = null) {
     const u = this.uniforms;
+    let screen = false;
+    if (view) {
+      const { x0, y0, span } = this.region || { x0: 0, y0: 0, span: 1 }, S = this.screenTarget;
+      u.uH.value.set(1 / span, 0, -x0 / span, 0, 1 / span, -y0 / span, 0, 0, 1).multiply(view.H);
+      screen = (view.perPx / span) * this.size <= 1.35 && S.width * S.height <= 1.1 * this.size * this.size;
+    }
+    this.screen = screen;
+    u.uScreen.value = screen ? 1 : 0;
     const dt = Math.min(Math.max(t - (this._t ?? t), 0), 0.1);
     this._t = t;
     u.uTime.value = t;
@@ -1327,7 +1360,7 @@ export class PlateRenderer {
     const r = this.renderer, saved = r.getRenderTarget();
     this._field(world.def);
     this.quad.material = this._material(world.def);
-    r.setRenderTarget(this.target);
+    r.setRenderTarget(screen ? this.screenTarget : this.target);
     r.render(this.scene, this.cam);
     r.setRenderTarget(saved);
   }

@@ -34,15 +34,18 @@ const BRIGHT_FRAG = /* glsl */ `
   }
 `;
 
+// The same nine taps in five fetches: each pair of neighbours (1 and 2, 3 and 4 texels out) is read with one linear
+// fetch placed between them by their weights, which the texture filter blends back into the two
+const PAIRS = [[1, 2], [3, 4]].map(([a, b]) => [(a * BLUR_W[a] + b * BLUR_W[b]) / (BLUR_W[a] + BLUR_W[b]), BLUR_W[a] + BLUR_W[b]]);
 const BLUR_FRAG = /* glsl */ `
   precision highp float;
   uniform sampler2D tSrc; uniform vec2 uDir;
   varying vec2 vUv;
   void main() {
     vec3 s = texture2D(tSrc, vUv).rgb * ${BLUR_W[0].toFixed(7)};
-    ${BLUR_W.slice(1).map((w, i) => `
-    s += texture2D(tSrc, vUv + uDir * ${(i + 1).toFixed(1)}).rgb * ${w.toFixed(7)};
-    s += texture2D(tSrc, vUv - uDir * ${(i + 1).toFixed(1)}).rgb * ${w.toFixed(7)};`).join('')}
+    ${PAIRS.map(([o, w]) => `
+    s += texture2D(tSrc, vUv + uDir * ${o.toFixed(7)}).rgb * ${w.toFixed(7)};
+    s += texture2D(tSrc, vUv - uDir * ${o.toFixed(7)}).rgb * ${w.toFixed(7)};`).join('')}
     gl_FragColor = vec4(s, 1.0);
   }
 `;

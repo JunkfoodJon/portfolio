@@ -47,16 +47,24 @@ float gearRatio(float n1, float n2) { return -n1 / n2; }
 float meshPhase(float ph1, float n1, float n2, float phi) { return phi + PI - PI / n2 - (phi - ph1) * gearRatio(n1, n2); }
 
 // ── hashing and noise (exact integer hash: the same grain on every GPU) ─────
-float hash3(vec3 p) {
-  uvec3 q = uvec3(ivec3(floor(p * 1024.0 + 0.5)));
-  uint h = q.x * 73856093u ^ q.y * 19349663u ^ q.z * 83492791u;
+float hashMix(uint h) {
   h ^= h >> 15u; h *= 0x2c1b3c6du; h ^= h >> 12u;
   return float(h >> 8u) * (1.0 / 16777216.0);
 }
+float hash3(vec3 p) {
+  uvec3 q = uvec3(ivec3(floor(p * 1024.0 + 0.5)));
+  return hashMix(q.x * 73856093u ^ q.y * 19349663u ^ q.z * 83492791u);
+}
+// The same as hashing its eight corners one by one, bit for bit, at a third of the multiplies: a corner one step on is
+// 1024 further on hash3's grid, so each axis's term for it is the near corner's plus 1024 times that axis's constant
+// (wrapping as the products themselves do). Exact while the lattice stays within ±16384 (the grid then holds every step)
 float noise3(vec3 x) {
   vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(hash3(i), hash3(i + vec3(1,0,0)), f.x), mix(hash3(i + vec3(0,1,0)), hash3(i + vec3(1,1,0)), f.x), f.y),
-             mix(mix(hash3(i + vec3(0,0,1)), hash3(i + vec3(1,0,1)), f.x), mix(hash3(i + vec3(0,1,1)), hash3(i + vec3(1,1,1)), f.x), f.y), f.z);
+  uvec3 q = uvec3(ivec3(floor(i * 1024.0 + 0.5)));
+  uint x0 = q.x * 73856093u, y0 = q.y * 19349663u, z0 = q.z * 83492791u;
+  uint x1 = x0 + 1024u * 73856093u, y1 = y0 + 1024u * 19349663u, z1 = z0 + 1024u * 83492791u;
+  return mix(mix(mix(hashMix(x0 ^ y0 ^ z0), hashMix(x1 ^ y0 ^ z0), f.x), mix(hashMix(x0 ^ y1 ^ z0), hashMix(x1 ^ y1 ^ z0), f.x), f.y),
+             mix(mix(hashMix(x0 ^ y0 ^ z1), hashMix(x1 ^ y0 ^ z1), f.x), mix(hashMix(x0 ^ y1 ^ z1), hashMix(x1 ^ y1 ^ z1), f.x), f.y), f.z);
 }
 // (a loop the compiler cannot unroll, as ShadowMan's windows: unrolled at every call, Windows' D3D compiler took
 // seconds more over a world's first compile, Choir's nearly half of it; the pixels are the same)

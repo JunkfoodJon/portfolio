@@ -35,14 +35,16 @@ const K_FOV = 2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2));
 // screen of 1440 device pixels or more (2048 still covers a 1080p one at full approach); ?ultra lets them
 // grow larger still (PlateRenderer.resize)
 // A phone or tablet (a mobile browser, iPadOS posing as a Mac, or a coarse pointer on a small screen) has a fraction
-// of a desktop's GPU and memory: it starts at 1.5 (1 where Android reports ≤ 4 GB), with plates up to 1536 (1024): a plate is redrawn every frame,
-// and on a phone it is most of the frame; and no large emblem targets (emblems.js)
+// of a desktop's GPU and memory: plates up to 1536 (1024 where Android reports ≤ 4 GB), and no large emblem targets
+// (emblems.js). Close to a face a plate is drawn straight onto the screen's pixels (PlateRenderer.render), fewer than its
+// square target held, and that buys a phone its screen's own density up to 2 (most are 2–3; the letters read sharp
+// there), from 1.5 before; 1 where Android reports ≤ 4 GB
 const UA = navigator.userAgent;
 export const MOBILE    = /Android|iPhone|iPad|iPod|Mobile/i.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1)
                       || (matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820);
 const LOW              = MOBILE && navigator.deviceMemory > 0 && navigator.deviceMemory <= 4;
 const DPR              = Math.max(window.devicePixelRatio || 1, 1);
-export const MAX_RATIO = MOBILE ? (LOW ? 1 : 1.5) : Math.min(2, Math.round(DPR * 1.25 * 20) / 20);
+export const MAX_RATIO = MOBILE ? (LOW ? 1 : Math.min(2, Math.max(1.5, DPR))) : Math.min(2, Math.round(DPR * 1.25 * 20) / 20);
 export const PLATE_CAP = MOBILE ? (LOW ? 1024 : 1536) : Math.max(screen.height, innerHeight) * DPR >= 1440 ? 3072 : 2048;
 export const ULTRA     = new URLSearchParams(location.search).has('ultra');
 
@@ -78,6 +80,7 @@ const FACE_FRAG = /* glsl */ `
   uniform float uGrow; uniform float uHide; uniform vec3 uInfoMap;
   uniform float uMasked;       // the info texture is a plate, whose alpha masks its resting words out of the glow
   uniform float uWait;        // a side still being prepared, held at: the face breathes with light, as the loader's did
+  uniform float uScreen;      // the info texture is the plate drawn straight onto the screen: read a pixel for a pixel
   varying vec2 vUv; varying vec3 vBary; varying vec3 vN; varying vec3 vView;
 
   void main() {
@@ -89,7 +92,8 @@ const FACE_FRAG = /* glsl */ `
 
 
     vec3 art  = texture2D(uMap, vUv).rgb * uEmblem;
-    vec4 inf  = texture2D(uInfo, (vUv - uInfoMap.xy) / uInfoMap.z);                 // (the info texture's square of the face)
+    vec4 inf  = uScreen > 0.5 ? texelFetch(uInfo, ivec2(gl_FragCoord.xy), 0)
+                              : texture2D(uInfo, (vUv - uInfoMap.xy) / uInfoMap.z);   // (the info texture's square of the face)
     vec3 info = inf.rgb * uInfoOn;
 
     // Frosted, lit-from-within glass: bright and washed out far away, then it
@@ -152,6 +156,23 @@ const BORDER_VERT = /* glsl */ `
 const BORDER_FRAG = /* glsl */ `precision highp float; uniform float uLine; varying float vLvl; varying float vD;
   void main() { gl_FragColor = vec4(vec3(vLvl * clamp(0.5 * (uLine + 1.0) - abs(vD), 0.0, 1.0)), 1.0); }`;
 
+/** The 8 unknowns of a projective map from its 8 equations (Gaussian elimination, partial pivoting). */
+function solve8(A, b) {
+  const M = A.map((row, i) => [...row, b[i]]), n = 8;
+  for (let c = 0; c < n; c++) {
+    let best = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[best][c])) best = r;
+    [M[c], M[best]] = [M[best], M[c]];
+    for (let r = c + 1; r < n; r++) {
+      const k = M[r][c] / M[c][c];
+      for (let j = c; j <= n; j++) M[r][j] -= k * M[c][j];
+    }
+  }
+  const x = new Array(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) { let s = M[r][n]; for (let j = r + 1; j < n; j++) s -= M[r][j] * x[j]; x[r] = s / M[r][r]; }
+  return x;
+}
+
 // ─── Crystal ────────────────────────────────────────────────────────────────
 
 export class Crystal {
@@ -204,6 +225,7 @@ export class Crystal {
       uHover: { value: 0 }, uFocus: { value: 0 }, uDim: { value: 0 }, uIntro: { value: 0 }, uTime: { value: 0 },
       uBack: { value: 0 }, uReveal: { value: 0 }, uEmblem: { value: 1 }, uInfoOn: { value: 0 },
       uGrow: { value: 1 }, uHide: { value: 0 }, uInfoMap: { value: new THREE.Vector3(0, 0, 1) }, uWait: { value: 0 }, uMasked: { value: 0 },
+      uScreen: { value: 0 },
     });
     this.cens = FACES.map((tri) => tri.reduce((c, v) => c.add(new THREE.Vector3(...VERTS[v])), new THREE.Vector3()).multiplyScalar(1 / 3));
     this.frontMats = []; this.backMats = [];
@@ -310,7 +332,7 @@ export class Crystal {
     this.focus.face = face; this.focus.depth = depth; this.focus.emblem = emblem; this.focus.info = info;
     this.focus.grow = face >= 0 ? grow : 1; this.focus.hide = face >= 0 ? hide : 0;
     if (prev !== face) {
-      if (prev >= 0) { this.frontMats[prev].uniforms.uInfo.value = this.blank; }
+      if (prev >= 0) { this.frontMats[prev].uniforms.uInfo.value = this.blank; this.frontMats[prev].uniforms.uScreen.value = 0; }
       // (no depth buffer: the focused face is drawn last, so as it grows in its own plane it covers the faces it
       // grows across, as it is in front of them all: the crystal lies wholly behind any face's plane)
       this.geo.groups.sort((a, b) => (a.materialIndex === face) - (b.materialIndex === face) || a.materialIndex - b.materialIndex);
@@ -320,6 +342,40 @@ export class Crystal {
       this.frontMats[face].uniforms.uMasked.value = infoTexture?.isRenderTargetTexture ? 1 : 0;
       this.frontMats[face].uniforms.uInfoMap.value.set(map ? map.x0 : 0, map ? map.y0 : 0, map ? map.span : 1);
     }
+  }
+
+  /** The focused face's info texture as the plate was just drawn: `screen`, straight onto the screen (see PlateRenderer.render). */
+  setInfo(texture, screen) {
+    const m = this.frontMats[this.focus.face];
+    if (!m) return;
+    m.uniforms.uInfo.value = texture;
+    m.uniforms.uScreen.value = screen ? 1 : 0;
+  }
+
+  /**
+   * For the focused face: the projective map from drawing-buffer pixels (gl_FragCoord) to face uv, as the face's own
+   * perspective-correct uv runs over it (its grown corners, and its centre for the fourth point such a map needs), as
+   * H; and how much face uv a pixel spans at the centre of the screen, perPx. Null without a focused face.
+   */
+  faceScreenMap() {
+    const f = this.focus, i = f.face;
+    if (i < 0) return null;
+    const v = this.renderer.getDrawingBufferSize(this._buf || (this._buf = new THREE.Vector2()));
+    const cen = this.cens[i], E = f.grow, eqs = [], rhs = [], p = new THREE.Vector3();
+    const point = (w, u) => {                                   // w: a point of the face's plane, u: its uv
+      p.copy(w).applyMatrix4(this.group.matrixWorld).project(this.camera);
+      const x = (p.x + 1) / 2, y = (p.y + 1) / 2;               // (the buffer, scaled to 0–1: better conditioned)
+      eqs.push([x, y, 1, 0, 0, 0, -u[0] * x, -u[0] * y], [0, 0, 0, x, y, 1, -u[1] * x, -u[1] * y]);
+      rhs.push(u[0], u[1]);
+    };
+    FACES[i].forEach((vi, k) => point(new THREE.Vector3(...VERTS[vi]).sub(cen).multiplyScalar(E).add(cen),
+      [UV_C[0] + E * (FACE_UV[k][0] - UV_C[0]), UV_C[1] + E * (FACE_UV[k][1] - UV_C[1])]));
+    point(cen, UV_C);
+    const h = solve8(eqs, rhs);
+    const H = (this._H || (this._H = new THREE.Matrix3())).set(h[0] / v.x, h[1] / v.y, h[2], h[3] / v.x, h[4] / v.y, h[5], h[6] / v.x, h[7] / v.y, 1);
+    const at = (x, y) => { const e = H.elements, z = e[2] * x + e[5] * y + e[8]; return [(e[0] * x + e[3] * y + e[6]) / z, (e[1] * x + e[4] * y + e[7]) / z]; };
+    const c = at(v.x / 2, v.y / 2), dx = at(v.x / 2 + 1, v.y / 2), dy = at(v.x / 2, v.y / 2 + 1);
+    return { H, perPx: Math.max(Math.hypot(dx[0] - c[0], dx[1] - c[1]), Math.hypot(dy[0] - c[0], dy[1] - c[1])) };
   }
 
   /** Hit test: { face, u, v } under a client point, or null. */

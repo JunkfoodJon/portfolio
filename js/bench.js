@@ -183,6 +183,7 @@ function memory() {
     [`scene target ${P.sceneRT.width}×${P.sceneRT.height}, ${P.sceneRT.samples || 0}× MSAA${P.sceneRT.depthBuffer ? ', depth' : ''}`]: rtBytes(P.sceneRT),
     'bloom chain': rtBytes(P.brightRT) + P.blurRT.reduce((t, [a, b]) => t + rtBytes(a) + rtBytes(b), 0),
     [`plate target ${plates.target.width}² + mipmaps`]: rtBytes(plates.target),
+    ...(plates.screenTarget ? { [`plate screen target ${plates.screenTarget.width}×${plates.screenTarget.height}`]: rtBytes(plates.screenTarget) } : {}),
     [`emblem targets 8 × ${faces.faces[0].target.width}², ${faces.faces[0].target.samples}× MSAA${faces.msaa ? `, + one shared ${faces.msaa.samples}× buffer` : ''}`]:
       faces.faces.reduce((t, f) => t + rtBytes(f.target), 0) + (faces.msaa ? rtBytes(faces.msaa) : 0),
     [`words canvas ${C.width}² (texture + mipmaps)`]: words * 4 / 3,
@@ -422,7 +423,7 @@ async function shoot(name, results, base, stamp) {
   if (prev) vs = compare(ink, await decode(prev), words.mask);
   if (!prev || MODE === 'baseline') await putFrame(key, blob);
   delete words.mask;
-  const v = { view: name, rest: timingRest, words, vsBaseline: vs, savedAsBaseline: !prev || MODE === 'baseline' };
+  const v = { view: name, rest: timingRest, words, vsBaseline: vs, savedAsBaseline: !prev || MODE === 'baseline', plateOnScreen: !!ctx.plates.screen };
   results.views.push(v);
   say(report(results, stamp));
   return v;
