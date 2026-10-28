@@ -28,6 +28,8 @@ const loaderFaces = loader.querySelectorAll('.loader-dot i');
 // anyway and the rest is prepared behind it (a side not yet ready holds its approach, see Pilot)
 const WAIT_CAP = 5000;
 const warmed = new Array(8).fill(false);
+// ?bench: the measuring harness (bench.js) runs the frame loop on its own clock; it is never loaded otherwise
+const bench = new URLSearchParams(location.search).has('bench') ? await import('./bench.js') : null;
 
 await fontsReady;                                    // (painted words: lay out only once their faces are in)
 
@@ -162,6 +164,7 @@ if (!crystal) {
   let last = performance.now(), t = 0, emaDt = 1 / 60, slow = 0, frameCount = 0, words = -1, warming = false;
   const startedAt = performance.now();
   document.addEventListener('visibilitychange', () => { last = performance.now(); });
+  bench?.attach({ crystal, faces, world, plates, pilot, mobile: MOBILE, ready: (i) => warmed[i], setTime: (v) => { t = v; } });
 
   const frame = (now) => {
     requestAnimationFrame(frame);
@@ -186,8 +189,8 @@ if (!crystal) {
 
     // frame-time governor, one way only (it never steps back up, so it cannot oscillate): after ~1.5 s
     // (counted in time, not frames, so a slow GPU is not kept waiting through 90 slow ones) under ~45 fps (a
-    // 50 Hz screen is not slow) the pixel ratio 0.5 at a time from MAX_RATIO down to 1 (2 → 1.5 → 1, 1.4 → 1;
-    // MSAA returns below 1.5); then, under ~26 fps, the plates' size, then MSAA. A frame counts for at most 50 ms, so a one-off hitch (a shader compiling)
+    // 50 Hz screen is not slow) the pixel ratio 0.5 at a time from MAX_RATIO down to 1 (2 → 1.5 → 1, 1.4 → 1);
+    // then, under ~26 fps, the plates' size. A frame counts for at most 50 ms, so a one-off hitch (a shader compiling)
     // does not trip it, and frames that follow a redraw of the words' canvas not at all: that time is the
     // CPU's, and fewer pixels would not buy it back (nor do those that prepared a side: that is the warm-up's)
     if (!redrew && !warmedLast) {
@@ -199,7 +202,6 @@ if (!crystal) {
       if (crystal.pixelRatio > 1) { crystal.setPixelRatio(Math.max(1, crystal.pixelRatio - 0.5)); plates.resize(); }
       else if (plates.scale > 0.7) plates.setScale(0.7);
       else if (MOBILE && plates.scale > 0.5) plates.setScale(0.5);          // (a phone has one step more to give)
-      else if (crystal.post.quality > 0) crystal.post.setQuality(0);
     }
 
     if (frameCount++ >= 3 && !dismissed && (allWarm || booted || now - startedAt > WAIT_CAP)) {

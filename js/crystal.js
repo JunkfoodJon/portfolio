@@ -36,7 +36,7 @@ const K_FOV = 2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2));
 // grow larger still (PlateRenderer.resize)
 // A phone or tablet (a mobile browser, iPadOS posing as a Mac, or a coarse pointer on a small screen) has a fraction
 // of a desktop's GPU and memory: it starts at 1.5 (1 where Android reports ≤ 4 GB), with plates up to 1536 (1024): a plate is redrawn every frame,
-// and on a phone it is most of the frame; and no MSAA (Post) or large emblem targets (emblems.js)
+// and on a phone it is most of the frame; and no large emblem targets (emblems.js)
 const UA = navigator.userAgent;
 export const MOBILE    = /Android|iPhone|iPad|iPod|Mobile/i.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1)
                       || (matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820);
@@ -112,12 +112,20 @@ const FACE_FRAG = /* glsl */ `
   }
 `;
 
+// A border is drawn as a strip of thin quads, not as GL lines: each is uLine pixels wide and carries its own coverage
+// (that width seen through a pixel: full across its middle, falling to nothing over a pixel either side), so it is
+// smooth with no multisampling. A quad corner is its segment's end `position` pushed sideways on screen (aSide, by
+// half the width and a half pixel) across the segment toward aOther (aEnd: +1 at the start, −1 at the end)
 const BORDER_VERT = /* glsl */ `
   attribute float aAlong; attribute float aFace;
+  attribute vec3 aN1; attribute vec3 aN2;   // the normals of the two faces that meet on this edge (its own first)
+  attribute vec3 aOther; attribute float aSide; attribute float aEnd;
   uniform float uHover[8]; uniform float uFocus; uniform float uDim; uniform float uTime; uniform float uIntro;
   uniform float uGrow; uniform vec3 uCen; uniform float uHide; uniform float uWait;
   uniform float uWidth;        // buffer pixels per screen pixel: a line is one buffer pixel wide, so it is that much brighter
-  varying float vLvl;
+  uniform vec2 uRes;           // the drawing buffer, in pixels
+  uniform float uLine;         // a line's width, in buffer pixels
+  varying float vLvl; varying float vD;
   void main() {
     int f = int(aFace + 0.5);
     float h = uHover[f];
@@ -128,10 +136,21 @@ const BORDER_VERT = /* glsl */ `
     lvl *= 1.0 + foc * uWait * (0.5 + 0.5 * sin(uTime * 1.9635));
     vLvl = lvl * uIntro * uWidth;
     vec3 p = foc > 0.5 ? uCen + uGrow * (position - uCen) : position;    // the focused face's border grows with it
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+    // the crystal is convex, so there is no depth buffer: an edge shows while either face that meets on it is
+    // turned toward the camera, and is behind the crystal once both are turned away (as a depth test would have it)
+    vec3 to = cameraPosition - (modelMatrix * vec4(p, 1.0)).xyz;
+    vLvl *= step(0.0, max(dot(mat3(modelMatrix) * aN1, to), dot(mat3(modelMatrix) * aN2, to)));
+    vec3 q = foc > 0.5 ? uCen + uGrow * (aOther - uCen) : aOther;
+    vec4 c = projectionMatrix * modelViewMatrix * vec4(p, 1.0), o = projectionMatrix * modelViewMatrix * vec4(q, 1.0);
+    vec2 dir = normalize((o.xy / o.w - c.xy / c.w) * uRes);
+    float reach = 0.5 * (uLine + 1.0);
+    c.xy += vec2(-dir.y, dir.x) * aSide * aEnd * reach * (2.0 / uRes) * c.w;
+    vD = aSide * reach;
+    gl_Position = c;
   }
 `;
-const BORDER_FRAG = /* glsl */ `precision highp float; varying float vLvl; void main() { gl_FragColor = vec4(vec3(vLvl), 1.0); }`;
+const BORDER_FRAG = /* glsl */ `precision highp float; uniform float uLine; varying float vLvl; varying float vD;
+  void main() { gl_FragColor = vec4(vec3(vLvl * clamp(0.5 * (uLine + 1.0) - abs(vD), 0.0, 1.0)), 1.0); }`;
 
 // ─── Crystal ────────────────────────────────────────────────────────────────
 
@@ -159,7 +178,7 @@ export class Crystal {
     this.camera.position.set(0, 0, 9);
 
     this._buildCrystal();
-    this.post = new Post(this.renderer, { msaa: !MOBILE });
+    this.post = new Post(this.renderer);
     this.resize();
   }
 
@@ -207,20 +226,26 @@ export class Crystal {
     this.group.add(this.back, this.mesh);
 
     // borders: one draw call, light chases the edges
-    const bp = [], along = [], bf = [];
+    const bp = [], other = [], side = [], end = [], along = [], bf = [], n1 = [], n2 = [], index = [];
     const PIECES = 48;
+    const unit = FACES.map((_, f) => this._localNormal(f, new THREE.Vector3()));
     FACES.forEach((tri, f) => {
       const a0 = new THREE.Vector3(...VERTS[tri[0]]), a1 = new THREE.Vector3(...VERTS[tri[1]]), a2 = new THREE.Vector3(...VERTS[tri[2]]);
       const n = new THREE.Vector3().crossVectors(a1.clone().sub(a0), a2.clone().sub(a0)).normalize().multiplyScalar(0.004);
       const P = [a0, a1, a2];
       for (let e = 0; e < 3; e++) {
         const a = P[e], b = P[(e + 1) % 3];
+        const g = FACES.findIndex((t, k) => k !== f && t.includes(tri[e]) && t.includes(tri[(e + 1) % 3]));   // the face across this edge
         for (let p = 0; p < PIECES; p++) {
           const s0 = p / PIECES, s1 = (p + 1) / PIECES;
-          const p0 = a.clone().lerp(b, s0).add(n), p1 = a.clone().lerp(b, s1).add(n);
-          bp.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
-          along.push((e + s0) / 3, (e + s1) / 3);
-          bf.push(f, f);
+          const p0 = a.clone().lerp(b, s0).add(n), p1 = a.clone().lerp(b, s1).add(n), k = bp.length / 3;
+          for (const [at, to, s, u] of [[p0, p1, 1, s0], [p1, p0, -1, s1]]) {   // each end, a corner either side
+            for (const sd of [-1, 1]) {
+              bp.push(...at.toArray()); other.push(...to.toArray()); side.push(sd); end.push(s);
+              along.push((e + u) / 3); bf.push(f); n1.push(...unit[f].toArray()); n2.push(...unit[g].toArray());
+            }
+          }
+          index.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
         }
       }
     });
@@ -228,15 +253,22 @@ export class Crystal {
     bg.setAttribute('position', new THREE.Float32BufferAttribute(bp, 3));
     bg.setAttribute('aAlong', new THREE.Float32BufferAttribute(along, 1));
     bg.setAttribute('aFace', new THREE.Float32BufferAttribute(bf, 1));
+    bg.setAttribute('aN1', new THREE.Float32BufferAttribute(n1, 3));
+    bg.setAttribute('aN2', new THREE.Float32BufferAttribute(n2, 3));
+    bg.setAttribute('aOther', new THREE.Float32BufferAttribute(other, 3));
+    bg.setAttribute('aSide', new THREE.Float32BufferAttribute(side, 1));
+    bg.setAttribute('aEnd', new THREE.Float32BufferAttribute(end, 1));
+    bg.setIndex(index);
     this.borderMat = new THREE.ShaderMaterial({
       vertexShader: BORDER_VERT, fragmentShader: BORDER_FRAG,
       uniforms: {
         uHover: { value: Array.from(this.hoverAmt) }, uFocus: { value: -1 }, uDim: { value: 0 }, uTime: { value: 0 }, uIntro: { value: 0 },
         uGrow: { value: 1 }, uCen: { value: new THREE.Vector3() }, uHide: { value: 0 }, uWidth: { value: 1 }, uWait: { value: 0 },
+        uRes: { value: new THREE.Vector2(1, 1) }, uLine: { value: 1 },
       },
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
     });
-    this.borders = new THREE.LineSegments(bg, this.borderMat);
+    this.borders = new THREE.Mesh(bg, this.borderMat);
     this.borders.frustumCulled = false;
     this.borders.renderOrder = 2;
     this.group.add(this.borders);
@@ -279,6 +311,9 @@ export class Crystal {
     this.focus.grow = face >= 0 ? grow : 1; this.focus.hide = face >= 0 ? hide : 0;
     if (prev !== face) {
       if (prev >= 0) { this.frontMats[prev].uniforms.uInfo.value = this.blank; }
+      // (no depth buffer: the focused face is drawn last, so as it grows in its own plane it covers the faces it
+      // grows across, as it is in front of them all: the crystal lies wholly behind any face's plane)
+      this.geo.groups.sort((a, b) => (a.materialIndex === face) - (b.materialIndex === face) || a.materialIndex - b.materialIndex);
     }
     if (face >= 0) {
       this.frontMats[face].uniforms.uInfo.value = infoTexture;
@@ -467,6 +502,10 @@ export class Crystal {
     this.renderer.setSize(w, h, false);
     this.borderMat.uniforms.uWidth.value = this._perScreen();
     const v = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    this.borderMat.uniforms.uRes.value.copy(v);
+    // (1.4 px where the scene used to be multisampled, below ratio 1.5 off a phone: Direct3D draws a multisampled
+    // line 1.4 px wide, and the glow round the crystal was made with those)
+    this.borderMat.uniforms.uLine.value = !MOBILE && this.pixelRatio < 1.5 ? 1.2 : 1;
     this.post.setSize(v.x, v.y, this.pixelRatio, this._perScreen());
   }
 }

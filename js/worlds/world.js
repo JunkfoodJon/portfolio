@@ -1006,7 +1006,9 @@ ${ids}
     // the words: their plaques (canvas alpha, softened) blot out the engraving, then the letters (red) on them
     float halo = textureLod(uText, vUv, 2.0).a;
     vec4 T = texture(uText, vUv);
-    float txt = pow(T.a * T.r, 0.75);                         // (lifts the edges of fine strokes)
+    // (lifts the edges of fine strokes; a large letter's strokes are wide enough to show their true edge, which
+    // reads sharper: the lift eases off from 14 to 40 px, by the nearest letter's size in the words' field)
+    float txt = pow(T.a * T.r, mix(0.75, 1.0, smoothstep(14.0, 40.0, words(vUv).w)));
     float clear = 1.0 - 0.95 * smoothstep(0.03, 0.45, halo);
     vec3 washC = vec3(0.0);
 #ifdef PAINT

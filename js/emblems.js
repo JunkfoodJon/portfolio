@@ -2,8 +2,8 @@
  * emblems.js — one animated wireframe emblem per project, rendered to texture.
  *
  * Each emblem is a tiny Three.js scene drawn with additive lines on black into
- * its own 1024² multisampled render target. crystal.js maps that target onto one
- * octahedron face.
+ * one shared 1024² multisampled buffer and resolved into its own plain texture.
+ * crystal.js maps that texture onto one octahedron face.
  *
  * Framing contract (must match FACE_UV in crystal.js): the triangle's incircle is
  * centred at EMBLEM_Y in this scene's world units and has radius ≈ 0.89, so every
@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import { MOBILE } from './crystal.js';
 
-const RTT_SIZE   = MOBILE ? 512 : 1024;   // (a phone's face is a few hundred pixels across: 8 multisampled 1024² targets are memory it lacks)
+const RTT_SIZE   = MOBILE ? 512 : 1024;   // (a phone's face is a few hundred pixels across: 1024² targets are memory it lacks)
 const TAU        = Math.PI * 2;
 export const EMBLEM_Y     = -0.445;   // incircle centre in this scene's world units
 const K                   = 0.893;    // world units per wall unit (incircle radius)
@@ -856,15 +856,34 @@ const BUILDERS = [arachnia, tessera, thoughtslayer, choir, shadowman, lightify, 
 export class FaceRenderer {
   constructor(renderer) {
     this.renderer = renderer;
+    // one multisampled buffer for all eight (a 4× buffer each was most of the scene's memory): an emblem is drawn
+    // there, and the resolve, the same blit three would make into a target of its own, goes into its own texture
+    this.msaa = this._target(4);
     this.faces = BUILDERS.map((build) => this._make(build));
   }
 
-  _make(build) {
+  _target(samples) {
     const target = new THREE.WebGLRenderTarget(RTT_SIZE, RTT_SIZE, {
       minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
-      generateMipmaps: false, samples: 4, depthBuffer: false,          // (nothing in an emblem writes depth)
+      generateMipmaps: false, samples, depthBuffer: false,             // (nothing in an emblem writes depth)
     });
     target.texture.colorSpace = THREE.SRGBColorSpace;
+    return target;
+  }
+
+  /** The shared buffer's last drawing, resolved, into target (a blit of the same size: the texture three's own resolve would give). */
+  _resolve(target) {
+    const r = this.renderer, gl = r.getContext(), P = r.properties;
+    if (!P.get(target).__webglFramebuffer) r.initRenderTarget(target);
+    r.state.bindFramebuffer(gl.READ_FRAMEBUFFER, P.get(this.msaa).__webglFramebuffer);
+    r.state.bindFramebuffer(gl.DRAW_FRAMEBUFFER, P.get(target).__webglFramebuffer);
+    gl.blitFramebuffer(0, 0, RTT_SIZE, RTT_SIZE, 0, 0, RTT_SIZE, RTT_SIZE, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    r.state.bindFramebuffer(gl.READ_FRAMEBUFFER, null);             // (as three leaves its own resolve)
+    r.state.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+  }
+
+  _make(build) {
+    const target = this._target(0);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
@@ -893,7 +912,7 @@ export class FaceRenderer {
   /** Compile every emblem's programs up front, each for its own target (so for its colour space): one promise per face. */
   prepare() {
     const r = this.renderer, saved = r.getRenderTarget();
-    const done = this.faces.map((f) => { r.setRenderTarget(f.target); return r.compileAsync(f.scene, f.camera).catch(() => {}); });
+    const done = this.faces.map((f) => { r.setRenderTarget(this.msaa); return r.compileAsync(f.scene, f.camera).catch(() => {}); });
     r.setRenderTarget(saved);
     return done;
   }
@@ -948,8 +967,9 @@ export class FaceRenderer {
       const s = 1 + Math.sin(f.pulse * Math.PI) * 0.06;
       f.inner.scale.setScalar(s);
       f.update(t, k);
-      r.setRenderTarget(f.target);
+      r.setRenderTarget(this.msaa);
       r.render(f.scene, f.camera);
+      this._resolve(f.target);
     }
 
     r.setRenderTarget(savedTarget);

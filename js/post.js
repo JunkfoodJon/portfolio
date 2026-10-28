@@ -61,6 +61,9 @@ const COMPOSITE_FRAG = /* glsl */ `
   void main() {
     vec2 d = vUv - 0.5;
     vec3 sc;
+    // words at rest (the scene's alpha below 1, see the face shader) take neither the fringe nor the vignette:
+    // their edges stay one colour and they keep their brightness out to the screen's edge
+    float words;
     if (uWarp > 0.002) {
       sc = vec3(0.0);
       for (int i = 0; i < 7; i++) {
@@ -68,11 +71,12 @@ const COMPOSITE_FRAG = /* glsl */ `
         sc += texture2D(tScene, 0.5 + d * (1.0 - uWarp * s)).rgb;
       }
       sc /= 7.0;
+      words = 1.0 - clamp(texture2D(tScene, vUv).a, 0.0, 1.0);
     } else {
       float f = uFringe * dot(d, d);
-      sc.r = texture2D(tScene, vUv - d * f).r;
-      sc.g = texture2D(tScene, vUv).g;
-      sc.b = texture2D(tScene, vUv + d * f).b;
+      vec4 r = texture2D(tScene, vUv - d * f), g = texture2D(tScene, vUv), b = texture2D(tScene, vUv + d * f);
+      words = 1.0 - clamp(min(g.a, min(r.a, b.a)), 0.0, 1.0);   // (a letter beside this pixel would fringe onto it)
+      sc = mix(vec3(r.r, g.g, b.b), g.rgb, words);
     }
 
     vec3 bloom = texture2D(tB0, vUv).rgb * 0.55 + texture2D(tB1, vUv).rgb * 0.75
@@ -85,7 +89,7 @@ const COMPOSITE_FRAG = /* glsl */ `
     col += uGlow * pool * 0.035;
 
     float vig = 1.0 - smoothstep(0.25, 1.05, length(d * vec2(uAspect * 0.8, 1.0)));
-    col *= mix(0.55, 1.0, vig);
+    col *= mix(mix(0.55, 1.0, vig), 1.0, words);
 
     col = aces(col * 1.05);
     col = pow(col, vec3(1.0 / 2.2));
@@ -94,10 +98,8 @@ const COMPOSITE_FRAG = /* glsl */ `
 `;
 
 export class Post {
-  constructor(renderer, { msaa = true } = {}) {
+  constructor(renderer) {
     this.renderer = renderer;
-    this.quality = 1;
-    this.msaa = msaa;            // (a phone never multisamples its half-float target: memory and bandwidth it cannot spare)
     this.type = (renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float'))
       ? THREE.HalfFloatType : THREE.UnsignedByteType;
 
@@ -144,18 +146,12 @@ export class Post {
     this._build();
   }
 
-  setQuality(level) {            // 1 = full, 0 = no MSAA
-    if (level === this.quality) return;
-    this.quality = level;
-    this._build();
-  }
-
   _build() {
     this.sceneRT?.dispose();
     this.blurRT.forEach(([a, b]) => { a.dispose(); b.dispose(); });
-    const msaa = this.msaa && this.quality > 0 && this.ratio < 1.5 && this.type === THREE.HalfFloatType ? 4 : 0;
-    this.sceneRT = this._rt(this.w, this.h, msaa);
-    this.sceneRT.depthBuffer = true;
+    // no multisampling and no depth: the crystal's borders antialias themselves, and it is convex (see its borders and
+    // setFocus), so the target is the scene's colour alone
+    this.sceneRT = this._rt(this.w, this.h);
     // the glow is sized in screen pixels, not the buffer's: supersampled, it starts that much further down
     const k = 2 * Math.max(1, this.perScreen);
     this.brightRT = this._rt(this.w / k, this.h / k);
