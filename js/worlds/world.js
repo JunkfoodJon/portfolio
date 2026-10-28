@@ -128,6 +128,8 @@ export class World {
     this.caret = '';                          // the accent ink of the inscription being set
     this.fx = 1;                              // … and its effect's progress
     this.laidV = 0;                           // counted each time the words are laid out again
+    this.drawScale = 1;                       // the zoom the canvas was last drawn at, over the true one (see draw)
+    this.quantize = true;                     // … in eighths of an octave while moving (off: always exact, for comparing)
   }
 
   static defs() { return Object.values(WORLDS); }
@@ -360,6 +362,13 @@ export class World {
     // has the view moved since the last drawing? (then arcs are drawn roughly, see _arc)
     const at = `${this.CX} ${this.CY} ${this.U} ` + levels.map((L) => `${L.k} ${L.s} ${L.cx} ${L.cy}`).join(' ');
     this.moving = at !== this._at; this._at = at; this.rough = false;
+    // while it moves, everything is drawn at the nearest eighth of an octave of the zoom, scaled about the view's centre
+    // (CX, CY, where every plate's centre falls): the letters then take sizes the browser has already set from frame to
+    // frame instead of new ones it would set anew, and the plate reads the canvas that much in (PlateRenderer, uWf).
+    // At rest it is drawn exactly (rough asks for that drawing once the view stops)
+    const s0 = levels[0]?.s || 1;
+    this.drawScale = this.moving && this.quantize ? Math.pow(2, Math.round(Math.log2(s0) * 8) / 8) / s0 : 1;
+    if (this.drawScale !== 1) this.rough = true;
     if (!this.def) return;
     c.textBaseline = 'middle';
     const now = performance.now() / 1000, live = new Set();
@@ -369,7 +378,7 @@ export class World {
       let shown = this.shown.get(n0);
       if (!shown) this.shown.set(n0, (shown = new Map()));
       const P = this.def.plates[L.id];
-      const k = L.s * this.U;                                 // canvas px per plate unit
+      const k = L.s * this.U * this.drawScale;                // canvas px per plate unit (as drawn)
       const X = (x) => this.CX + (x - L.cx) * k;
       const Y = (y) => this.CY - (y - L.cy) * k;
       c.save();
@@ -900,6 +909,11 @@ function fragment(def) {
   vec2 plateUv() { if (uScreen < 0.5) return vUv; vec3 h = uH * vec3(gl_FragCoord.xy, 1.0); return h.xy / h.z; }
   #define vUv gUv
   vec2 gUv;
+  // where the words' canvas holds this pixel's words: while the view moves the canvas is drawn at the nearest eighth
+  // of an octave of the zoom (World.draw: the letters keep sizes the browser has already set, which is most of what
+  // drawing them costs), uWf times the true size about the view's centre uWc, so it is read that much in; 1 at rest
+  uniform vec2 uWc; uniform float uWf;
+  vec2 wUv;
   out vec4 outColor;
   float gAge;                  // seconds since the plate being drawn came into view (plates may animate in by it)
   int gPlate;                  // which plate is being drawn (a world's text effect may differ by plate)
@@ -914,7 +928,7 @@ ${SDF_GLSL}
   // wash is too fine to hold it back) steps back by s within k ems of them; 1 elsewhere. A plate calls it where it
   // lays bright lines under words
   float roomForWords(float k, float s) {
-    vec4 w = words(vUv);
+    vec4 w = words(wUv);
     if (w.w <= 0.0) return 1.0;
     return 1.0 - s * (1.0 - smoothstep(0.4, k, w.x / max(w.w, 4.0)));
   }
@@ -994,6 +1008,7 @@ ${ids}
   }
   void main() {
     gUv = plateUv();
+    wUv = uWc + (vUv - uWc) * uWf;
     vec2 a = (vUv - uWall.xy) / uWall.z;                     // wall-screen units
     int lv = 0;
     for (int i = 1; i < ${MAX_LEVELS}; i++) {
@@ -1011,11 +1026,11 @@ ${ids}
     float lum = plate(uId[lv], q, g);
     float amt = uDepth[lv], loopN = uLoop[lv];
     // the words: their plaques (canvas alpha, softened) blot out the engraving, then the letters (red) on them
-    float halo = textureLod(uText, vUv, 2.0).a;
-    vec4 T = texture(uText, vUv);
+    float halo = textureLod(uText, wUv, 2.0).a;
+    vec4 T = texture(uText, wUv);
     // (lifts the edges of fine strokes; a large letter's strokes are wide enough to show their true edge, which
     // reads sharper: the lift eases off from 14 to 40 px, by the nearest letter's size in the words' field)
-    float txt = pow(T.a * T.r, mix(0.75, 1.0, smoothstep(14.0, 40.0, words(vUv).w)));
+    float txt = pow(T.a * T.r, mix(0.75, 1.0, smoothstep(14.0, 40.0, words(wUv).w)));
     float clear = 1.0 - 0.95 * smoothstep(0.03, 0.45, halo);
     vec3 washC = vec3(0.0);
 #ifdef PAINT
@@ -1023,12 +1038,12 @@ ${ids}
     // the pigment gathered at its drying edge, on a faint paper grain; ink-grey on the surface, the world's deep
     // colour (with a little of its others bleeding in) deeper. Only near a blot (the canvas's coarsest mips: the wash
     // and its fringe reach well under one of their texels), so the rest of the plate pays nothing for it
-    if (textureLod(uText, vUv, 7.0).a > 0.0005) {
-      vec2 P = vUv * uCanvas;
+    if (textureLod(uText, wUv, 7.0).a > 0.0005) {
+      vec2 P = wUv * uCanvas;
       // at rest (see WASH): how settled the words here are (0 while they paint in or unpaint: the wash as it was),
       // and the drift, rolling through a warp of itself
-      vec4 wr = words(vUv);
-      float settle = smoothstep(0.85, 1.0, paintAge(vUv, wr)) * smoothstep(0.85, 1.0, wr.y);
+      vec4 wr = words(wUv);
+      float settle = smoothstep(0.85, 1.0, paintAge(wUv, wr)) * smoothstep(0.85, 1.0, wr.y);
       float em = max(wr.w, 8.0);
       float core = 1.0 - smoothstep(0.35 * em, 0.9 * em, wr.x);              // right behind the letters: never thinned
       float near = 1.0 - smoothstep(0.8 * em, 1.6 * em, wr.x);               // … and its edge held still round them
@@ -1041,14 +1056,14 @@ ${ids}
       vec2 wv = 0.6 * (vec2(noise3(vec3(P / 70.0, 1.3)), noise3(vec3(P / 70.0, 6.1))) - 0.5)   // (one octave: the warp is broad)
               + roam * 0.6 * swell * ww;
       float n1 = fbm3(vec3(P / 40.0, 3.1)) + roam * 0.5 * (live - 0.5), n2 = noise3(vec3(P / 9.0, 5.7));
-      float h = mix(textureLod(uText, vUv + wv * 30.0 / uCanvas, 2.0).a, textureLod(uText, vUv + wv * 50.0 / uCanvas, 3.5).a, 0.5)
+      float h = mix(textureLod(uText, wUv + wv * 30.0 / uCanvas, 2.0).a, textureLod(uText, wUv + wv * 50.0 / uCanvas, 3.5).a, 0.5)
               + 0.16 * (n1 - 0.5) + 0.07 * (n2 - 0.5);
       float wash = smoothstep(0.05, 0.3, h);
       float rim = smoothstep(0.05, 0.13, h) * (1.0 - smoothstep(0.13, 0.3, h));   // where the pigment dried at the edge
       float grain = noise3(vec3(P / 1.7, 9.1));
       float bloom = smoothstep(0.35, 0.75, n1);                                  // paler pools inside, where water ran back
       // and a pale outer bleed, so what glows just beyond the wash cannot flood back over the words
-      float fringe = smoothstep(0.0, 0.12, textureLod(uText, vUv + wv * 80.0 / uCanvas, 5.0).a + 0.05 * (n1 - 0.5));
+      float fringe = smoothstep(0.0, 0.12, textureLod(uText, wUv + wv * 80.0 / uCanvas, 5.0).a + 0.05 * (n1 - 0.5));
       clear = (1.0 - wash * (0.965 + 0.03 * rim)) * (1.0 - 0.55 * fringe);
       float bleedA = smoothstep(0.55, 0.8, noise3(vec3(P / 70.0, 2.2))), bleedB = smoothstep(0.6, 0.85, noise3(vec3(P / 60.0, 8.4)));
       vec3 deep = uPal[0] * (1.0 - 0.45 * rim) + uPal[3] * 0.035 * bleedA + uPal[1] * 0.03 * bleedB;
@@ -1080,18 +1095,18 @@ ${ids}
     vec3 accent = mix(vec3(1.0), fullTone(oddL ? uPal[1] : uPal[3]), amt);
     float acc = 1.0 - smoothstep(0.45, 0.55, T.g / max(T.r, 1e-3));
 #if defined(TEXT_FX) || defined(PAINT)
-    acc = words(vUv).z;                                       // (the nearest letter's, so a word's effect keeps its colour)
+    acc = words(wUv).z;                                       // (the nearest letter's, so a word's effect keeps its colour)
 #endif
     vec3 tc = mix(body, accent, acc);
     tc = mix(tc, vec3(1.0), sat(0.62 - dot(tc, vec3(0.2126, 0.7152, 0.0722))));   // no colour too dark to read
     float sweep = exp(-pow((fract(dot(q, vec2(0.55, 0.835)) * 0.32 - uTime * 0.055) - 0.5) * 10.0, 2.0));
     tc *= 0.64 * (1.0 + 0.3 * sweep);
 #ifdef PAINT
-    paintWords(vUv, txt, tc);
+    paintWords(wUv, txt, tc);
 #endif
 #ifdef TEXT_FX
     // a world may reshape its words by their field (kpx: canvas px per plate unit); each effect ends as the plain text
-    textFx(vUv, q, V.z * uWall.z * uCanvas, txt, tc, clear);
+    textFx(wUv, q, V.z * uWall.z * uCanvas * uWf, txt, tc, clear);
 #endif
     lum *= clear;
     vec3 rgb = vec3(lum);
@@ -1109,8 +1124,8 @@ ${ids}
     float rest = 0.0;
 #ifdef PAINT
     if (halo > 0.01) {                                        // (letters always sit on their blots)
-      vec4 wr = words(vUv);
-      rest = smoothstep(0.9, 1.0, paintAge(vUv, wr)) * smoothstep(0.9, 1.0, wr.y)
+      vec4 wr = words(wUv);
+      rest = smoothstep(0.9, 1.0, paintAge(wUv, wr)) * smoothstep(0.9, 1.0, wr.y)
            * (1.0 - smoothstep(0.0, 0.15 * max(wr.w, 8.0) + 1.0, wr.x));
     }
 #endif
@@ -1154,6 +1169,7 @@ export class PlateRenderer {
       uAge: { value: new Array(MAX_LEVELS).fill(0) },
       uPal: { value: Array.from({ length: 4 }, () => new THREE.Color(1, 1, 1)) },
       uScreen: { value: 0 }, uH: { value: new THREE.Matrix3() },
+      uWc: { value: new THREE.Vector2(0.5, 0.5) }, uWf: { value: 1 },
     };
 
     // the text field (see FIELD): two seed targets the flood ping-pongs between, and the field itself
@@ -1324,6 +1340,8 @@ export class PlateRenderer {
     }
     this.screen = screen;
     u.uScreen.value = screen ? 1 : 0;
+    u.uWf.value = world.drawScale;                               // (the scale the words' canvas was last drawn at, see World.draw)
+    u.uWc.value.set(world.CX / world.SIZE, 1 - world.CY / world.SIZE);
     const dt = Math.min(Math.max(t - (this._t ?? t), 0), 0.1);
     this._t = t;
     u.uTime.value = t;

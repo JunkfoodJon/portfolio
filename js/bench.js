@@ -107,13 +107,14 @@ const timer = {
 const add = (m, k, v) => { m[k] = (m[k] || 0) + v; };
 
 /** Time n frames: per-section GPU and CPU ms a frame. */
-async function timed(n, render = true, until = null) {
+async function timed(n, render = true, until = null, onFrame = null) {
   const run = timing = { gpu: {}, cpu: {}, frames: 0, uploads: 0, uploadMB: 0 };
   for (let i = 0; i < n; i++) {
     const t0 = realNow();
     step();
     add(run.cpu, 'frame (all)', realNow() - t0);
     run.frames++;
+    if (onFrame) onFrame(i);                         // (in the same task as the frame: its buffer is still there)
     if (i % 4 === 3) await yieldTask();
     if (until && until()) break;
   }
@@ -200,9 +201,9 @@ function memory() {
 // ── the frame as shown, and the words in it ─────────────────────────────────
 
 /** The drawing buffer, scaled to device pixels as the browser composites it (bilinear), as RGBA rows top-down. */
-function grab() {
+function grab(again = true) {
   const r = ctx.crystal.renderer;
-  step(0);                                           // (drawn again, same instant: a buffer already shown may be cleared)
+  if (again) step(0);                                // (drawn again, same instant: a buffer already shown may be cleared)
   r.setRenderTarget(null);
   const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight, px = new Uint8Array(w * h * 4);
   gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
@@ -395,14 +396,18 @@ async function reset() {
   seed = 1;
 }
 
-/** Step until the view has come to rest and the words have finished arriving (or `max` frames). */
-async function rest(max = 1500, render = false) {
+/**
+ * Step until the view has come to rest and the words have finished arriving, and on to `at` frames whenever that came
+ * (or `max`): each view is then seen at the same moment however many frames its settling took, so art that moves with
+ * time is caught at the same phase from run to run.
+ */
+async function rest(at = 600, max = 1500, render = false) {
   const P = ctx.pilot, W = ctx.world;
   skipRender = !render;
   for (let i = 0; i < max; i++) {
     step();
     if (i % 4 === 3) await yieldTask();
-    if (!P.goal && !P.rewind && P.Dv === 0 && P.D === P.Dt && !(P.worldOn && (W.animating || W.rough))) break;
+    if (i + 1 >= at && !P.goal && !P.rewind && P.Dv === 0 && P.D === P.Dt && !(P.worldOn && (W.animating || W.rough))) break;
   }
   skipRender = false;
 }
@@ -445,7 +450,7 @@ async function run() {
   say(report(results, stamp));
 
   await reset();
-  await rest(300, true);
+  await rest(300, 300, true);
   await shoot('orbit', results, true, stamp);
   results.memory = memory();
 
@@ -461,8 +466,16 @@ async function run() {
     await shoot(`${name} · ${VIEWS[1]}`, results, true, stamp);
     // the zoom to the next plate, timed all the way (the words redraw every frame while it moves)
     P.worldNext();
-    const z = await timed(1500, true, () => !P.goal && P.Dv === 0 && P.D === P.Dt);
-    results.zoom.push({ world: name, ...z });
+    let mid = null;                                   // a frame half-way through the zoom (the words as drawn while moving)
+    const z = await timed(1500, true, () => !P.goal && P.Dv === 0 && P.D === P.Dt, (i) => { if (i === 40) mid = grab(false); });
+    let midVs = null;
+    if (mid) {
+      const key = `${mid.w}x${mid.h}/${name} · mid-zoom`, prev = await getFrame(key), blob = await mid.canvas.convertToBlob({ type: 'image/png' });
+      window.__benchFrames.set(`${name} · mid-zoom`, blob);
+      if (prev) midVs = compare(mid, await decode(prev), null);
+      if (!prev || MODE === 'baseline') await putFrame(key, blob);
+    }
+    results.zoom.push({ world: name, ...z, midVsBaseline: midVs });
     await rest(); await frames(30);
     await shoot(`${name} · ${VIEWS[2]}`, results, true, stamp);
     for (let k = 0; k < W.N; k++) { P.worldNext(); await rest(); }
@@ -501,6 +514,8 @@ function report(R, stamp, done = false) {
 /** main.js hands over the scene once it is built: { crystal, faces, world, plates, pilot, ready(i), setTime(t), mobile }. */
 export function attach(c) {
   ctx = c;
+  if (new URLSearchParams(location.search).has('noquant')) c.world.quantize = false;   // (the words drawn exactly while moving too)
+  window.__benchFrames ||= new Map();
   gl = c.crystal.renderer.getContext();
   timer.init();
   hookGL();
@@ -519,6 +534,7 @@ export function attach(c) {
       }
     } finally { timer.leave(); }
   };
+  for (const k of ['_lines', '_arc', '_plaque', '_judged']) section(c.world, k, `words: draw canvas › ${k.slice(1)}`);
   section(c.faces, 'render', 'emblems', true);
   section(c.plates, '_field', 'words: distance field');
   section(c.plates, 'render', 'plate', true);
