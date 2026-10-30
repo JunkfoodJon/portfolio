@@ -278,6 +278,18 @@ export class Pilot {
     this.leaving = this.Dt < 1;                          // a world does not unwind its loops on the way out
   }
 
+  /**
+   * Move the depth target by dD (wheel, pinch, arrow keys). While a side not yet prepared holds the approach
+   * (see D_HOLD), the move goes to where the held approach is going, so a scroll is never lost to the hold;
+   * moving back past the hold lets it go.
+   */
+  _nudge(dD) {
+    const from = this.wantD ?? this.Dt, to = from + dD;
+    if (this.wantD != null && to > D_HOLD) { this.wantD = Math.min(1, to); return; }
+    this.wantD = null;
+    this.Dt = Math.min(this._dMax(), Math.max(0, to));
+  }
+
   /** Enter a face from orbit. */
   enter(face) {
     if (this.goal && this.face === face && this.goal.D1 >= 1) return;
@@ -786,7 +798,7 @@ export class Pilot {
       const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       if (this.pinch0 > 0) {
         this.goal = null; this.smoothT = T_WHEEL;
-        this.Dt = Math.min(this._dMax(), Math.max(0, this.Dt + Math.log(d / this.pinch0) * 0.55));
+        this._nudge(Math.log(d / this.pinch0) * 0.55);
         this.uT = null; this.leaving = false; this.rewind = null;
         this.lastWheel = performance.now();
         this.pinch0 = d;
@@ -984,7 +996,7 @@ export class Pilot {
       if (hit) this.aimFresh = false;
     }
     const d = Math.max(-WHEEL_CAP, Math.min(WHEEL_CAP, dy));
-    this.Dt = Math.min(this._dMax(), Math.max(0, this.Dt - d * WHEEL_GAIN));
+    this._nudge(-d * WHEEL_GAIN);
   }
 
   _key(e) {
@@ -1003,7 +1015,7 @@ export class Pilot {
     if (k === 'ArrowUp' || k === 'ArrowDown') {
       e.preventDefault();
       this.goal = null; this.smoothT = T_WHEEL; this.lastWheel = performance.now(); this.leaving = false;
-      this.Dt = Math.min(this._dMax(), Math.max(0, this.Dt + (k === 'ArrowUp' ? 0.07 : -0.07)));
+      this._nudge(k === 'ArrowUp' ? 0.07 : -0.07);
       return;
     }
     if (k === 'Enter' || k === ' ') {
